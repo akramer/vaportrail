@@ -1,0 +1,17 @@
+# Binaries
+vaportrail
+main
+
+# Database
+*.db
+vaportrail.db
+
+# Temporary files
+output.json
+
+# System files
+.DS_Store
+
+# Brain artifacts
+walkthrough.md
+tasks.md
