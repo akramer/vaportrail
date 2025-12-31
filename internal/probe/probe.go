@@ -2,11 +2,16 @@ package probe
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand"
+	"net"
+	"net/http"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,53 +27,38 @@ func (r RealRunner) Run(cfg Config) (float64, error) {
 	return Run(cfg)
 }
 
-// Config defines how to run a probe and parse its output.
+// Config defines how to run a probe.
 type Config struct {
-	Command string   `json:"command"` // Command to execute, e.g. "ping", "curl"
-	Args    []string `json:"args"`    // Arguments, e.g. ["-c", "1", "google.com"]
-	// Regex pattern to extract a metric. Must contain a named group "val".
-	// The value should be a float number.
-	// Example for ping: "time=(?P<val>[0-9.]+) ms"
-	Pattern string `json:"pattern"`
-	// Multiplier to convert the extracted value to Nanoseconds.
-	// e.g. if extraction is in ms, Multiplier should be 1,000,000.
-	Multiplier float64 `json:"multiplier"`
-	// Timeout for the probe execution.
-	Timeout time.Duration `json:"-"`
+	Type    string `json:"type"`    // "ping", "http", "dns"
+	Address string `json:"address"` // Target address
+
+	// Deprecated fields, kept for "ping" command execution
+	Command    string        `json:"command"`
+	Args       []string      `json:"args"`
+	Pattern    string        `json:"pattern"`
+	Multiplier float64       `json:"multiplier"`
+	Timeout    time.Duration `json:"-"`
 }
 
 // GetConfig returns the probe configuration for a given type and target address.
 func GetConfig(probeType, address string) (Config, error) {
+	cfg := Config{
+		Type:    probeType,
+		Address: address,
+	}
+
 	switch probeType {
 	case "ping":
-		return Config{
-			Command:    "ping",
-			Args:       []string{"-c", "1", address},
-			Pattern:    "time=(?P<val>[0-9.]+) ms",
-			Multiplier: 1000000,
-		}, nil
-	case "http":
-		return Config{
-			Command: "curl",
-			Args: []string{
-				"-w", "time_total: %{time_total}\n",
-				"-o", "/dev/null",
-				"-s",
-				address,
-			},
-			Pattern:    "time_total: (?P<val>[0-9.]+)",
-			Multiplier: 1000000000,
-		}, nil
-	case "dns":
-		return Config{
-			Command:    "dig",
-			Args:       []string{fmt.Sprintf("@%s", address), "example.com"},
-			Pattern:    "Query time: (?P<val>[0-9]+) msec",
-			Multiplier: 1000000,
-		}, nil
+		cfg.Command = "ping"
+		cfg.Args = []string{"-c", "1", address}
+		cfg.Pattern = "time=(?P<val>[0-9.]+) ms"
+		cfg.Multiplier = 1000000
+	case "http", "dns":
+		// Native implementations don't need Command/Args/Pattern
 	default:
 		return Config{}, fmt.Errorf("unknown probe type: %s", probeType)
 	}
+	return cfg, nil
 }
 
 // Run executes the probe and returns the latency in nanoseconds.
@@ -79,6 +69,96 @@ func Run(cfg Config) (float64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
+	var res float64
+	var err error
+
+	switch cfg.Type {
+	case "http":
+		res, err = runHTTP(ctx, cfg.Address)
+	case "dns":
+		res, err = runDNS(ctx, cfg.Address)
+	case "ping":
+		res, err = runCommand(ctx, cfg)
+	default:
+		return 0, fmt.Errorf("unknown probe type: %s", cfg.Type)
+	}
+
+	if err != nil {
+		if strings.Contains(err.Error(), "probe timed out") {
+			return 0, err
+		}
+		if isTimeout(err) {
+			return 0, fmt.Errorf("probe timed out: %w", err)
+		}
+		return 0, err
+	}
+	return res, nil
+}
+
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
+func runHTTP(ctx context.Context, address string) (float64, error) {
+	if !strings.HasPrefix(address, "http") {
+		address = "http://" + address
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", address, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	// Read body to ensure we measure full transfer time
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return 0, err
+	}
+
+	return float64(time.Since(start).Nanoseconds()), nil
+}
+
+func runDNS(ctx context.Context, address string) (float64, error) {
+	// Current behavior: dig @address example.com
+	// We want to query the DNS server at `address` for "example.com"
+
+	targetAddr := address
+	if !strings.Contains(targetAddr, ":") {
+		targetAddr = targetAddr + ":53"
+	}
+
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{}
+			return d.DialContext(ctx, "udp", targetAddr)
+		},
+	}
+
+	start := time.Now()
+	// querying for "example.com" A record
+	_, err := resolver.LookupHost(ctx, "example.com")
+	if err != nil {
+		return 0, err
+	}
+
+	return float64(time.Since(start).Nanoseconds()), nil
+}
+
+func runCommand(ctx context.Context, cfg Config) (float64, error) {
 	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

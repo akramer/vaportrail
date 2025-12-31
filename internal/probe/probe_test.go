@@ -18,6 +18,9 @@ func TestGetConfig(t *testing.T) {
 			address:   "1.1.1.1",
 			wantErr:   false,
 			check: func(t *testing.T, c Config) {
+				if c.Type != "ping" {
+					t.Errorf("expected type ping, got %s", c.Type)
+				}
 				if c.Command != "ping" {
 					t.Errorf("expected command ping, got %s", c.Command)
 				}
@@ -33,8 +36,11 @@ func TestGetConfig(t *testing.T) {
 			address:   "http://google.com",
 			wantErr:   false,
 			check: func(t *testing.T, c Config) {
-				if c.Command != "curl" {
-					t.Errorf("expected command curl, got %s", c.Command)
+				if c.Type != "http" {
+					t.Errorf("expected type http, got %s", c.Type)
+				}
+				if c.Command != "" {
+					t.Errorf("expected empty command for http, got %s", c.Command)
 				}
 			},
 		},
@@ -44,17 +50,14 @@ func TestGetConfig(t *testing.T) {
 			address:   "8.8.8.8",
 			wantErr:   false,
 			check: func(t *testing.T, c Config) {
-				if c.Command != "dig" {
-					t.Errorf("expected command dig, got %s", c.Command)
+				if c.Type != "dns" {
+					t.Errorf("expected type dns, got %s", c.Type)
 				}
-				if len(c.Args) != 2 {
-					t.Errorf("expected 2 args, got %d", len(c.Args))
+				if c.Command != "" {
+					t.Errorf("expected empty command for dns, got %s", c.Command)
 				}
-				if c.Args[0] != "@8.8.8.8" {
-					t.Errorf("expected arg 0 to be @8.8.8.8, got %s", c.Args[0])
-				}
-				if c.Args[1] != "example.com" {
-					t.Errorf("expected arg 1 to be example.com, got %s", c.Args[1])
+				if c.Address != "8.8.8.8" {
+					t.Errorf("expected address 8.8.8.8, got %s", c.Address)
 				}
 			},
 		},
