@@ -6,6 +6,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
     <style>
         body {
             font-family: sans-serif;
@@ -28,13 +29,23 @@
 
 <body>
     <h1>VaporTrail Dashboard</h1>
-    <div style="margin-bottom: 20px;">
+    <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
         <button onclick="showAddTarget()">Add Target</button>
-        <span style="margin-left: 20px;">Graph Mode: </span>
+
+        <span>Graph Mode: </span>
         <select id="graph-mode" onchange="changeGraphMode(this.value)">
             <option value="line">Line Chart</option>
             <option value="heatmap">Heatmap</option>
         </select>
+
+        <span style="margin-left: 20px;">Start:</span>
+        <input type="datetime-local" id="start-time">
+
+        <span>End:</span>
+        <input type="datetime-local" id="end-time">
+
+        <button onclick="updateTimeRange()">Update</button>
+        <button onclick="resetTimeRange()">Reset (Last 1h)</button>
     </div>
     <div id="targets">Loading...</div>
 
@@ -80,6 +91,48 @@
     <script>
         let currentTargets = []; // Store targets globally for easy access
         let currentGraphMode = 'line';
+
+        // Initialize time inputs
+        function initTimeInputs() {
+            const end = new Date();
+            const start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
+            setTimeInputs(start, end);
+        }
+
+        function setTimeInputs(start, end) {
+            // datetime-local expects YYYY-MM-DDTHH:mm
+            const toLocalISO = (d) => {
+                const offset = d.getTimezoneOffset() * 60000;
+                return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+            };
+            document.getElementById('start-time').value = toLocalISO(start);
+            document.getElementById('end-time').value = toLocalISO(end);
+        }
+
+        function getTimeRange() {
+            const startVal = document.getElementById('start-time').value;
+            const endVal = document.getElementById('end-time').value;
+
+            if (startVal && endVal) {
+                return { start: new Date(startVal), end: new Date(endVal) };
+            }
+            return null;
+        }
+
+        function updateTimeRange() {
+            // Reload all charts with new time range
+            for (const t of currentTargets) {
+                loadChart(t.ID, 'chart-' + t.ID);
+            }
+        }
+
+        function resetTimeRange() {
+            initTimeInputs();
+            updateTimeRange();
+        }
+
+        // Initialize on load
+        window.addEventListener('load', initTimeInputs);
 
         function changeGraphMode(mode) {
             currentGraphMode = mode;
@@ -196,8 +249,16 @@
         }
 
         async function loadChart(id, canvasId) {
-            const end = new Date();
-            const start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
+            let start, end;
+            const userRange = getTimeRange();
+
+            if (userRange) {
+                start = userRange.start;
+                end = userRange.end;
+            } else {
+                end = new Date();
+                start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
+            }
 
             const url = '/api/results/' + id + '?start=' + start.toISOString() + '&end=' + end.toISOString();
             const res = await fetch(url);
@@ -396,6 +457,28 @@
                             }
                         },
                         plugins: {
+                            zoom: {
+                                zoom: {
+                                    drag: {
+                                        enabled: true,
+                                    },
+                                    mode: 'x',
+                                    onZoomComplete: function ({ chart }) {
+                                        const { min, max } = chart.scales.x;
+                                        setTimeInputs(new Date(min), new Date(max));
+                                        // Trigger reload to get high-res data for new range?
+                                        // The user might want to drag again, or seeing the inputs update is enough.
+                                        // Let's reload to be consistent with "Update" button which fetches data for the range.
+                                        // However, reload might reset the zoom if we are not careful.
+                                        // Actually, if we update the inputs, the user can click Update.
+                                        // But expected behavior "zoom in to that interval".
+                                        // If we reload, we get the data for that interval.
+                                        // Let's just update the inputs for now, and maybe trigger a fetch?
+                                        // If we fetch, we re-render the chart.
+                                        updateTimeRange();
+                                    }
+                                }
+                            },
                             tooltip: {
                                 callbacks: {
                                     label: function (context) {
@@ -500,6 +583,19 @@
                             }
                         },
                         plugins: {
+                            zoom: {
+                                zoom: {
+                                    drag: {
+                                        enabled: true,
+                                    },
+                                    mode: 'x',
+                                    onZoomComplete: function ({ chart }) {
+                                        const { min, max } = chart.scales.x;
+                                        setTimeInputs(new Date(min), new Date(max));
+                                        updateTimeRange();
+                                    }
+                                }
+                            },
                             legend: {
                                 position: 'bottom'
                             }
