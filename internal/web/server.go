@@ -208,6 +208,7 @@ type APIResult struct {
 	P50          float64
 	P75          float64
 	P100         float64
+	Percentiles  []float64 // 0th, 5th, 10th... 100th
 	TimeoutCount int64
 	ProbeCount   int64
 }
@@ -279,6 +280,13 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 				apiRes.P50 = sanitizeFloat(td.Quantile(0.5))
 				apiRes.P75 = sanitizeFloat(td.Quantile(0.75))
 				apiRes.P100 = sanitizeFloat(td.Quantile(1.0))
+
+				// Calculate every 5th percentile
+				apiRes.Percentiles = make([]float64, 21)
+				for i := 0; i <= 20; i++ {
+					p := float64(i) * 0.05
+					apiRes.Percentiles[i] = sanitizeFloat(td.Quantile(p))
+				}
 			}
 		}
 		apiResults = append(apiResults, apiRes)
