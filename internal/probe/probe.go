@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os/exec"
@@ -32,6 +33,8 @@ type Config struct {
 	// Multiplier to convert the extracted value to Nanoseconds.
 	// e.g. if extraction is in ms, Multiplier should be 1,000,000.
 	Multiplier float64 `json:"multiplier"`
+	// Timeout for the probe execution.
+	Timeout time.Duration `json:"-"`
 }
 
 // GetConfig returns the probe configuration for a given type and target address.
@@ -59,7 +62,7 @@ func GetConfig(probeType, address string) (Config, error) {
 	case "dns":
 		return Config{
 			Command:    "dig",
-			Args:       []string{address},
+			Args:       []string{fmt.Sprintf("@%s", address), "example.com"},
 			Pattern:    "Query time: (?P<val>[0-9]+) msec",
 			Multiplier: 1000000,
 		}, nil
@@ -73,9 +76,15 @@ func Run(cfg Config) (float64, error) {
 	// Jitter: Sleep for a random duration between 0 and 100ms to avoid thundering herd on local resources
 	time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 
-	cmd := exec.Command(cfg.Command, cfg.Args...)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return 0, fmt.Errorf("probe timed out after %v", cfg.Timeout)
+		}
 		// If the command fails, we still try to parse the output because some tools (like ping)
 		// might exit with non-zero even if we got some RTT data (though unlikely with count=1).
 		// However, for single probe, usually error means failure.

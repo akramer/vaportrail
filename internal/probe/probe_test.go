@@ -41,11 +41,20 @@ func TestGetConfig(t *testing.T) {
 		{
 			name:      "Valid DNS",
 			probeType: "dns",
-			address:   "google.com",
+			address:   "8.8.8.8",
 			wantErr:   false,
 			check: func(t *testing.T, c Config) {
 				if c.Command != "dig" {
 					t.Errorf("expected command dig, got %s", c.Command)
+				}
+				if len(c.Args) != 2 {
+					t.Errorf("expected 2 args, got %d", len(c.Args))
+				}
+				if c.Args[0] != "@8.8.8.8" {
+					t.Errorf("expected arg 0 to be @8.8.8.8, got %s", c.Args[0])
+				}
+				if c.Args[1] != "example.com" {
+					t.Errorf("expected arg 1 to be example.com, got %s", c.Args[1])
 				}
 			},
 		},

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -118,4 +119,80 @@ func TestTargetRemovalRace_WithMocks(t *testing.T) {
 		s.RemoveTarget(id)
 		wg.Wait()
 	}
+}
+
+func TestScheduler_TimeoutLogic(t *testing.T) {
+	mockDB := NewMockStore()
+	fakeClock := clockwork.NewFakeClock()
+	s := New(mockDB)
+	s.Clock = fakeClock
+
+	// Setup Mock Runner to simulate timeout
+	// In probe.go we return: fmt.Errorf("probe timed out after %v", cfg.Timeout)
+	mockRunner := &MockRunner{
+		RunFn: func(cfg probe.Config) (float64, error) {
+			// Simulate timeout logic
+			// Since we aren't actually running exec.CommandContext under the hood in the mock,
+			// we just return the error string that the scheduler looks for.
+			return 0, fmt.Errorf("probe timed out after %v", cfg.Timeout)
+		},
+	}
+	s.probeRunner = mockRunner
+
+	target := db.Target{
+		Name:           "TimeoutTarget",
+		Address:        "timeout.com",
+		ProbeType:      "http",
+		ProbeInterval:  0.1,  // 100ms
+		CommitInterval: 1.0,  // 1s
+		Timeout:        0.05, // 50ms (irrelevant for mock but good for consistency)
+	}
+
+	id, _ := mockDB.AddTarget(&target)
+	target.ID = id
+	s.AddTarget(target)
+
+	// Advance clock to trigger probes
+	// 1s commit interval, 0.1s probe interval -> ~10 probes
+	for i := 0; i < 15; i++ {
+		fakeClock.Advance(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Verify results
+	var results []db.Result
+	for i := 0; i < 5; i++ {
+		results, _ = mockDB.GetResults(id, 100)
+		if len(results) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	r := results[0]
+	// All probes should have failed with timeout
+	// ProbeCount should be 0 because we only count successes in the aggregator for stats
+	// But actually, wait. In scheduler.go:
+	/*
+		if val == -1.0 {
+			timeoutCount++
+			continue
+		}
+		count++
+	*/
+	// So ProbeCount (which comes from count) will be 0. TimeoutCount should be > 0.
+
+	if r.TimeoutCount == 0 {
+		t.Errorf("Expected TimeoutCount > 0, got %d", r.TimeoutCount)
+	}
+
+	if r.ProbeCount != 0 {
+		t.Errorf("Expected ProbeCount == 0 for all timeouts, got %d", r.ProbeCount)
+	}
+
+	s.RemoveTarget(id)
 }

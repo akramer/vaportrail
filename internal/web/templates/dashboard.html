@@ -33,20 +33,20 @@
 
     <div id="add-target-modal"
         style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:20px; border:1px solid black; z-index:1000;">
-        <h2>Add Target</h2>
+        <h2 id="modal-title">Add Target</h2>
         <form id="target-form" onsubmit="submitTarget(event)">
-            <input type="hidden" name="id">
+            <input type="hidden" name="id" id="target-id">
             <div>
                 <label>Name:</label><br>
-                <input type="text" name="name" required>
+                <input type="text" name="name" id="name" required>
             </div>
             <div>
                 <label>Address:</label><br>
-                <input type="text" name="address" required>
+                <input type="text" name="address" id="address" required>
             </div>
             <div>
                 <label>Probe Type:</label><br>
-                <select name="type">
+                <select name="type" id="probe-type">
                     <option value="ping">Ping</option>
                     <option value="http">HTTP</option>
                     <option value="dns">DNS</option>
@@ -54,11 +54,15 @@
             </div>
             <div>
                 <label>Probe Interval (s):</label><br>
-                <input type="number" name="interval" value="1.0" min="0.1" step="0.1">
+                <input type="number" name="interval" id="probe-interval" value="1.0" min="0.1" step="0.1">
             </div>
-            <div>
-                <label>Commit Interval (s):</label><br>
-                <input type="number" name="commit" value="60.0" min="1.0" step="1.0">
+            <div class="form-group">
+                <label for="commit-interval">Commit Interval (s):</label>
+                <input type="number" id="commit-interval" name="commit_interval" step="1.0" value="60.0">
+            </div>
+            <div class="form-group">
+                <label for="timeout">Timeout (s):</label>
+                <input type="number" id="timeout" name="timeout" step="any" value="5.0">
             </div>
             <button type="submit">Save</button>
             <button type="button"
@@ -67,81 +71,97 @@
     </div>
 
     <script>
+        let currentTargets = []; // Store targets globally for easy access
 
         async function submitTarget(e) {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            const data = {
-                Name: formData.get('name'),
-                Address: formData.get('address'),
-                ProbeType: formData.get('type'),
-                ProbeInterval: parseFloat(formData.get('interval')) || 1.0,
-                CommitInterval: parseFloat(formData.get('commit')) || 60.0
+            const id = document.getElementById('target-id').value;
+            const name = document.getElementById('name').value;
+            const address = document.getElementById('address').value;
+            const probeType = document.getElementById('probe-type').value;
+            const probeInterval = parseFloat(document.getElementById('probe-interval').value);
+            const commitInterval = parseFloat(document.getElementById('commit-interval').value);
+            const timeout = parseFloat(document.getElementById('timeout').value);
+
+            const payload = {
+                Name: name,
+                Address: address,
+                ProbeType: probeType,
+                ProbeInterval: probeInterval,
+                CommitInterval: commitInterval,
+                Timeout: timeout
             };
 
-            const id = formData.get('id');
             let res;
             if (id) {
                 res = await fetch('/api/targets/' + id, {
                     method: 'PUT',
-                    body: JSON.stringify(data)
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
             } else {
                 res = await fetch('/api/targets', {
                     method: 'POST',
-                    body: JSON.stringify(data)
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
             }
 
             if (res.ok) {
                 document.getElementById('add-target-modal').style.display = 'none';
                 loadTargets();
-                // We're done, reset form?
                 e.target.reset();
             } else {
-                alert("Failed to create target");
+                alert("Failed to save target");
             }
         }
 
         async function loadTargets() {
             const res = await fetch('/api/targets');
             const targets = await res.json();
-            const div = document.getElementById('targets');
-            div.innerHTML = '';
+            if (!targets) targets = [];
+            currentTargets = targets; // Update global targets array
+            const targetsDiv = document.getElementById('targets');
+            targetsDiv.innerHTML = targets.map(t => `
+                <div class="target-card">
+                    <h3>${t.Name} (${t.ProbeType})</h3>
+                    <p>Address: ${t.Address}</p>
+                    <p>Interval: ${t.ProbeInterval}s / Commit: ${t.CommitInterval}s / Timeout: ${t.Timeout || 5}s</p>
+                    <button onclick="editTarget(${t.ID})">Edit</button>
+                    <button style="background-color: #ff4444;" onclick="deleteTarget(${t.ID})">Delete</button>
+                    <div class="chart-container">
+                        <canvas id="chart-${t.ID}"></canvas>
+                    </div>
+                </div>
+            `).join('');
 
             for (const t of targets) {
-                const el = document.createElement('div');
-                el.className = 'target';
-                const canvasId = 'chart-' + t.ID;
-                el.innerHTML = '<h3>' + t.Name + ' (' + t.Address + ') [Interval: ' + t.ProbeInterval + 's] <button onclick="editTarget(' + t.ID + ')" style="font-size: 0.8em; margin-left: 10px;">Edit</button> <button onclick="deleteTarget(' + t.ID + ')" style="color:red; font-size: 0.8em; margin-left: 10px;">Delete</button></h3><div class="chart-container"><canvas id="' + canvasId + '"></canvas></div>';
-                div.appendChild(el);
-                loadChart(t.ID, canvasId);
+                loadChart(t.ID, 'chart-' + t.ID);
             }
         }
 
-        async function editTarget(id) {
-            const res = await fetch('/api/targets');
-            const targets = await res.json();
-            const t = targets.find(x => x.ID === id);
+        function editTarget(id) {
+            const t = currentTargets.find(t => t.ID === id);
             if (!t) return;
 
-            document.querySelector('#add-target-modal h2').innerText = 'Edit Target';
-            document.querySelector('input[name="id"]').value = t.ID;
-            document.querySelector('input[name="name"]').value = t.Name;
-            document.querySelector('input[name="address"]').value = t.Address;
-            document.querySelector('select[name="type"]').value = t.ProbeType;
-            document.querySelector('input[name="interval"]').value = t.ProbeInterval;
-            document.querySelector('input[name="commit"]').value = t.CommitInterval;
+            document.getElementById('modal-title').innerText = 'Edit Target';
+            document.getElementById('target-id').value = t.ID;
+            document.getElementById('name').value = t.Name;
+            document.getElementById('address').value = t.Address;
+            document.getElementById('probe-type').value = t.ProbeType;
+            document.getElementById('probe-interval').value = t.ProbeInterval;
+            document.getElementById('commit-interval').value = t.CommitInterval;
+            document.getElementById('timeout').value = t.Timeout || 5.0;
 
             document.getElementById('add-target-modal').style.display = 'block';
         }
 
         function showAddTarget() {
-            document.querySelector('#add-target-modal h2').innerText = 'Add Target';
-            document.querySelector('input[name="id"]').value = '';
+            document.getElementById('modal-title').innerText = 'Add Target';
+            document.getElementById('target-id').value = '';
             document.getElementById('target-form').reset();
-            document.querySelector('input[name="interval"]').value = 1.0;
-            document.querySelector('input[name="commit"]').value = 60.0;
+            document.getElementById('commit-interval').value = 60.0;
+            document.getElementById('timeout').value = 5.0;
             document.getElementById('add-target-modal').style.display = 'block';
         }
 
@@ -177,25 +197,66 @@
             const p50Data = data.map(d => (d.P50) / 1000000);
             const p75Data = data.map(d => (d.P75) / 1000000);
             const p100Data = data.map(d => (d.P100 || d.MaxNS) / 1000000);
+            const timeoutPercentageData = data.map(d => {
+                const total = d.ProbeCount + d.TimeoutCount;
+                return total > 0 ? (d.TimeoutCount / total) * 100 : 0;
+            });
 
             new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'Max (P100) (ms)', data: p100Data, borderColor: '#FF0000', backgroundColor: '#FF0000', fill: false, tension: 0.1, borderWidth: 1 },
-                        { label: 'Q3 (P75) (ms)', data: p75Data, borderColor: '#FF7F00', backgroundColor: '#FF7F00', fill: false, tension: 0.1, borderWidth: 1 },
-                        { label: 'Median (P50) (ms)', data: p50Data, borderColor: '#00FF00', backgroundColor: '#00FF00', fill: false, tension: 0.1, borderWidth: 2 },
-                        { label: 'Q1 (P25) (ms)', data: p25Data, borderColor: '#0000FF', backgroundColor: '#0000FF', fill: false, tension: 0.1, borderWidth: 1 },
-                        { label: 'Min (P0) (ms)', data: p0Data, borderColor: '#4B0082', backgroundColor: '#4B0082', fill: false, tension: 0.1, borderWidth: 1 }
+                        {
+                            label: 'Timeout %',
+                            data: timeoutPercentageData,
+                            type: 'bar',
+                            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1,
+                            yAxisID: 'y1',
+                            barPercentage: 0.5
+                        },
+                        { label: 'Max (P100) (ms)', data: p100Data, borderColor: '#FF0000', backgroundColor: '#FF0000', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                        { label: 'Q3 (P75) (ms)', data: p75Data, borderColor: '#FF7F00', backgroundColor: '#FF7F00', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                        { label: 'Median (P50) (ms)', data: p50Data, borderColor: '#00FF00', backgroundColor: '#00FF00', fill: false, tension: 0.1, borderWidth: 2, yAxisID: 'y' },
+                        { label: 'Q1 (P25) (ms)', data: p25Data, borderColor: '#0000FF', backgroundColor: '#0000FF', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                        { label: 'Min (P0) (ms)', data: p0Data, borderColor: '#4B0082', backgroundColor: '#4B0082', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' }
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
                     scales: {
                         x: { type: 'time', time: { unit: 'minute' } },
-                        y: { beginAtZero: true, title: { display: true, text: 'Latency (ms)' } }
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            beginAtZero: true,
+                            title: { display: true, text: 'Latency (ms)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            beginAtZero: true,
+                            grid: {
+                                drawOnChartArea: false,
+                            },
+                            title: { display: true, text: 'Timeouts (%)' },
+                            ticks: {
+                                callback: function (value) {
+                                    return value + "%"
+                                }
+                            },
+                            min: 0,
+                            max: 100
+                        }
                     },
                     plugins: {
                         legend: {

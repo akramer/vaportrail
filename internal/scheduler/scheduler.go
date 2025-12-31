@@ -3,6 +3,7 @@ package scheduler
 import (
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 	"vaportrail/internal/db"
@@ -81,6 +82,10 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 	if t.CommitInterval <= 0 {
 		t.CommitInterval = 60.0
 	}
+	if t.Timeout <= 0 {
+		t.Timeout = 5.0
+	}
+	cfg.Timeout = time.Duration(t.Timeout*1000) * time.Millisecond
 
 	probeTicker := s.Clock.NewTicker(time.Duration(t.ProbeInterval*1000) * time.Millisecond)
 	commitTicker := s.Clock.NewTicker(time.Duration(t.CommitInterval*1000) * time.Millisecond)
@@ -97,12 +102,13 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 
 	// Aggregator state
 	var (
-		count  int64
-		sum    float64
-		sqSum  float64
-		minVal float64 = math.MaxFloat64
-		maxVal float64 = -math.MaxFloat64
-		td             = tdigest.New()
+		count        int64
+		timeoutCount int64
+		sum          float64
+		sqSum        float64
+		minVal       float64 = math.MaxFloat64
+		maxVal       float64 = -math.MaxFloat64
+		td                   = tdigest.New()
 	)
 
 	// Start Aggregation Loop
@@ -112,6 +118,10 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 			case val, ok := <-resultsChan:
 				if !ok {
 					return
+				}
+				if val == -1.0 {
+					timeoutCount++
+					continue
 				}
 				count++
 				sum += val
@@ -125,17 +135,24 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				td.Add(val, 1)
 
 			case <-commitTicker.Chan():
-				if count == 0 {
+				if count == 0 && timeoutCount == 0 {
 					continue
 				}
 
 				// Make a copy or calculate stats
-				avg := sum / float64(count)
-				variance := (sqSum / float64(count)) - (avg * avg)
-				if variance < 0 {
-					variance = 0
+				var avg, stdDev, variance float64
+				if count > 0 {
+					avg = sum / float64(count)
+					variance = (sqSum / float64(count)) - (avg * avg)
+					if variance < 0 {
+						variance = 0
+					}
+					stdDev = math.Sqrt(variance)
+				} else {
+					// No successful probes, only timeouts
+					minVal = 0
+					maxVal = 0
 				}
-				stdDev := math.Sqrt(variance)
 
 				tdData, err := db.SerializeTDigest(td)
 				if err != nil {
@@ -144,25 +161,27 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				}
 
 				dbRes := &db.Result{
-					Time:        s.Clock.Now().UTC(),
-					TargetID:    t.ID,
-					MinNS:       int64(minVal),
-					MaxNS:       int64(maxVal),
-					AvgNS:       int64(avg),
-					StdDevNS:    stdDev,
-					SumSqNS:     sqSum,
-					ProbeCount:  count,
-					TDigestData: tdData,
+					Time:         s.Clock.Now().UTC(),
+					TargetID:     t.ID,
+					MinNS:        int64(minVal),
+					MaxNS:        int64(maxVal),
+					AvgNS:        int64(avg),
+					StdDevNS:     stdDev,
+					SumSqNS:      sqSum,
+					ProbeCount:   count,
+					TimeoutCount: timeoutCount,
+					TDigestData:  tdData,
 				}
 
 				if err := s.db.AddResult(dbRes); err != nil {
 					log.Printf("Failed to save result for %s: %v", t.Name, err)
 				} else {
-					log.Printf("Saved result for %s (count=%d)", t.Name, count)
+					log.Printf("Saved result for %s (count=%d, timeouts=%d)", t.Name, count, timeoutCount)
 				}
 
 				// Reset stats
 				count = 0
+				timeoutCount = 0
 				sum = 0
 				sqSum = 0
 				minVal = math.MaxFloat64
@@ -182,6 +201,16 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				defer func() { <-sem }() // Release
 				res, err := s.probeRunner.Run(cfg)
 				if err != nil {
+					if strings.Contains(err.Error(), "probe timed out") {
+						// We treat timeout as a result passed to aggregation loop (as 0 or special signal?)
+						// Actually, better to send a special value or separate channel?
+						// Let's use -1.0 to signal timeout in resultsChan to keep it simple for now,
+						// or just handle it here?
+						// Since aggregation loop is separate, we need to send it there.
+						// Let's send -1.0.
+						resultsChan <- -1.0
+						return
+					}
 					log.Printf("Probe failed for %s: %v", t.Name, err)
 					return
 				}

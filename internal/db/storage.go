@@ -48,7 +48,8 @@ func (d *DB) init() error {
 			probe_type TEXT NOT NULL,
 			probe_config JSON NOT NULL,
 			probe_interval REAL DEFAULT 1.0,
-			commit_interval REAL DEFAULT 60.0
+			commit_interval REAL DEFAULT 60.0,
+			timeout REAL DEFAULT 5.0
 		);`,
 		`CREATE TABLE IF NOT EXISTS results (
 			time DATETIME NOT NULL,
@@ -59,6 +60,7 @@ func (d *DB) init() error {
 			stddev_ns REAL,
 			sum_sq_ns REAL,
 			probe_count INTEGER,
+			timeout_count INTEGER DEFAULT 0,
 			tdigest_data BLOB,
 			FOREIGN KEY(target_id) REFERENCES targets(id)
 		);`,
@@ -87,18 +89,20 @@ type Target struct {
 	ProbeConfig    string // JSON
 	ProbeInterval  float64
 	CommitInterval float64
+	Timeout        float64
 }
 
 type Result struct {
-	Time        time.Time
-	TargetID    int64
-	MinNS       int64
-	MaxNS       int64
-	AvgNS       int64
-	StdDevNS    float64
-	SumSqNS     float64
-	ProbeCount  int64
-	TDigestData []byte
+	Time         time.Time
+	TargetID     int64
+	MinNS        int64
+	MaxNS        int64
+	AvgNS        int64
+	StdDevNS     float64
+	SumSqNS      float64
+	ProbeCount   int64
+	TimeoutCount int64
+	TDigestData  []byte
 }
 
 func (d *DB) AddTarget(t *Target) (int64, error) {
@@ -108,8 +112,11 @@ func (d *DB) AddTarget(t *Target) (int64, error) {
 	if t.CommitInterval <= 0 {
 		t.CommitInterval = 60.0
 	}
-	res, err := d.Exec(`INSERT INTO targets (name, address, probe_type, probe_config, probe_interval, commit_interval) VALUES (?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Address, t.ProbeType, t.ProbeConfig, t.ProbeInterval, t.CommitInterval)
+	if t.Timeout <= 0 {
+		t.Timeout = 5.0
+	}
+	res, err := d.Exec(`INSERT INTO targets (name, address, probe_type, probe_config, probe_interval, commit_interval, timeout) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Address, t.ProbeType, t.ProbeConfig, t.ProbeInterval, t.CommitInterval, t.Timeout)
 	if err != nil {
 		return 0, err
 	}
@@ -123,20 +130,23 @@ func (d *DB) UpdateTarget(t *Target) error {
 	if t.CommitInterval <= 0 {
 		t.CommitInterval = 60.0
 	}
-	_, err := d.Exec(`UPDATE targets SET name=?, address=?, probe_type=?, probe_interval=?, commit_interval=? WHERE id=?`,
-		t.Name, t.Address, t.ProbeType, t.ProbeInterval, t.CommitInterval, t.ID)
+	if t.Timeout <= 0 {
+		t.Timeout = 5.0
+	}
+	_, err := d.Exec(`UPDATE targets SET name=?, address=?, probe_type=?, probe_interval=?, commit_interval=?, timeout=? WHERE id=?`,
+		t.Name, t.Address, t.ProbeType, t.ProbeInterval, t.CommitInterval, t.Timeout, t.ID)
 	return err
 }
 
 func (d *DB) AddResult(r *Result) error {
-	_, err := d.Exec(`INSERT INTO results (time, target_id, min_ns, max_ns, avg_ns, stddev_ns, sum_sq_ns, probe_count, tdigest_data) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.Time, r.TargetID, r.MinNS, r.MaxNS, r.AvgNS, r.StdDevNS, r.SumSqNS, r.ProbeCount, r.TDigestData)
+	_, err := d.Exec(`INSERT INTO results (time, target_id, min_ns, max_ns, avg_ns, stddev_ns, sum_sq_ns, probe_count, timeout_count, tdigest_data) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Time, r.TargetID, r.MinNS, r.MaxNS, r.AvgNS, r.StdDevNS, r.SumSqNS, r.ProbeCount, r.TimeoutCount, r.TDigestData)
 	return err
 }
 
 func (d *DB) GetTargets() ([]Target, error) {
-	rows, err := d.Query(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval FROM targets`)
+	rows, err := d.Query(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout FROM targets`)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +155,7 @@ func (d *DB) GetTargets() ([]Target, error) {
 	var targets []Target
 	for rows.Next() {
 		var t Target
-		if err := rows.Scan(&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout); err != nil {
 			return nil, err
 		}
 		targets = append(targets, t)
@@ -154,7 +164,7 @@ func (d *DB) GetTargets() ([]Target, error) {
 }
 
 func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
-	rows, err := d.Query(`SELECT time, target_id, min_ns, max_ns, avg_ns, stddev_ns, sum_sq_ns, probe_count, tdigest_data 
+	rows, err := d.Query(`SELECT time, target_id, min_ns, max_ns, avg_ns, stddev_ns, sum_sq_ns, probe_count, timeout_count, tdigest_data 
 		FROM results WHERE target_id = ? ORDER BY time DESC LIMIT ?`, targetID, limit)
 	if err != nil {
 		return nil, err
@@ -164,7 +174,7 @@ func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Time, &r.TargetID, &r.MinNS, &r.MaxNS, &r.AvgNS, &r.StdDevNS, &r.SumSqNS, &r.ProbeCount, &r.TDigestData); err != nil {
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.MinNS, &r.MaxNS, &r.AvgNS, &r.StdDevNS, &r.SumSqNS, &r.ProbeCount, &r.TimeoutCount, &r.TDigestData); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -173,7 +183,7 @@ func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
 }
 
 func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, error) {
-	rows, err := d.Query(`SELECT time, target_id, min_ns, max_ns, avg_ns, stddev_ns, sum_sq_ns, probe_count, tdigest_data 
+	rows, err := d.Query(`SELECT time, target_id, min_ns, max_ns, avg_ns, stddev_ns, sum_sq_ns, probe_count, timeout_count, tdigest_data 
 		FROM results WHERE target_id = ? AND time >= ? AND time <= ? ORDER BY time ASC`, targetID, start, end)
 	if err != nil {
 		return nil, err
@@ -183,7 +193,7 @@ func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, e
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Time, &r.TargetID, &r.MinNS, &r.MaxNS, &r.AvgNS, &r.StdDevNS, &r.SumSqNS, &r.ProbeCount, &r.TDigestData); err != nil {
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.MinNS, &r.MaxNS, &r.AvgNS, &r.StdDevNS, &r.SumSqNS, &r.ProbeCount, &r.TimeoutCount, &r.TDigestData); err != nil {
 			return nil, err
 		}
 		results = append(results, r)

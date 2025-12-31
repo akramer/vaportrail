@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"html/template"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -47,6 +48,7 @@ func New(cfg *config.ServerConfig, database *db.DB, sched *scheduler.Scheduler) 
 
 func (s *Server) routes() {
 	s.router.Use(middleware.Logger)
+	s.router.Use(middleware.Recoverer)
 	s.router.Get("/", s.handleDashboard)
 	s.router.Get("/api/targets", s.handleGetTargets)
 	s.router.Post("/api/targets", s.handleCreateTarget)
@@ -78,6 +80,9 @@ func (s *Server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	if t.CommitInterval <= 0 {
 		t.CommitInterval = 60.0
+	}
+	if t.Timeout <= 0 {
+		t.Timeout = 5.0
 	}
 
 	// Check for valid probe type
@@ -150,6 +155,9 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	if t.CommitInterval == 0 {
 		t.CommitInterval = 60.0
 	}
+	if t.Timeout == 0 {
+		t.Timeout = 5.0
+	}
 
 	if _, err := probe.GetConfig(t.ProbeType, t.Address); err != nil {
 		http.Error(w, "Invalid probe type", http.StatusBadRequest)
@@ -188,18 +196,27 @@ func (s *Server) handleGetTargets(w http.ResponseWriter, r *http.Request) {
 }
 
 type APIResult struct {
-	Time     time.Time
-	TargetID int64
-	MinNS    int64
-	MaxNS    int64
-	AvgNS    int64
-	StdDevNS float64
-	SumSqNS  float64
-	P0       float64
-	P25      float64
-	P50      float64
-	P75      float64
-	P100     float64
+	Time         time.Time
+	TargetID     int64
+	MinNS        int64
+	MaxNS        int64
+	AvgNS        int64
+	StdDevNS     float64
+	SumSqNS      float64
+	P0           float64
+	P25          float64
+	P50          float64
+	P75          float64
+	P100         float64
+	TimeoutCount int64
+	ProbeCount   int64
+}
+
+func sanitizeFloat(f float64) float64 {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0.0
+	}
+	return f
 }
 
 func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
@@ -239,26 +256,29 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var apiResults []APIResult
+	// Initialize as empty slice so it marshals to [] instead of null
+	apiResults := []APIResult{}
 	for _, res := range dbResults {
 		apiRes := APIResult{
-			Time:     res.Time,
-			TargetID: res.TargetID,
-			MinNS:    res.MinNS,
-			MaxNS:    res.MaxNS,
-			AvgNS:    res.AvgNS,
-			StdDevNS: res.StdDevNS,
-			SumSqNS:  res.SumSqNS,
+			Time:         res.Time,
+			TargetID:     res.TargetID,
+			MinNS:        res.MinNS,
+			MaxNS:        res.MaxNS,
+			AvgNS:        res.AvgNS,
+			StdDevNS:     res.StdDevNS,
+			SumSqNS:      res.SumSqNS,
+			TimeoutCount: res.TimeoutCount,
+			ProbeCount:   res.ProbeCount,
 		}
 
 		if len(res.TDigestData) > 0 {
 			td, err := db.DeserializeTDigest(res.TDigestData)
 			if err == nil {
-				apiRes.P0 = td.Quantile(0.0)
-				apiRes.P25 = td.Quantile(0.25)
-				apiRes.P50 = td.Quantile(0.5)
-				apiRes.P75 = td.Quantile(0.75)
-				apiRes.P100 = td.Quantile(1.0)
+				apiRes.P0 = sanitizeFloat(td.Quantile(0.0))
+				apiRes.P25 = sanitizeFloat(td.Quantile(0.25))
+				apiRes.P50 = sanitizeFloat(td.Quantile(0.5))
+				apiRes.P75 = sanitizeFloat(td.Quantile(0.75))
+				apiRes.P100 = sanitizeFloat(td.Quantile(1.0))
 			}
 		}
 		apiResults = append(apiResults, apiRes)
