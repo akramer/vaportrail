@@ -218,13 +218,15 @@
             if (currentGraphMode === 'heatmap') {
                 // --- HEATMAP MODE ---
                 // Data for floating bars: [Min, Max]
-                // We use MinNS/MaxNS. If 0 (e.g. no data), handle gracefully.
+                // We use P1/P99 if available to filter outliers.
                 const barData = data.map(d => {
                     if (d.ProbeCount === 0) return null;
-                    // Use P0/P100 if available, else Min/Max
-                    const min = (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS) / 1000000;
-                    const max = (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS) / 1000000;
-                    return [min, max];
+                    // Use P1/P99 if available, else P0/P100 logic, else Min/Max
+                    // P1 is d.P1, P99 is d.P99.
+                    let minVal = d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS);
+                    let maxVal = d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS);
+
+                    return [minVal / 1000000, maxVal / 1000000];
                 });
 
                 const dataset = {
@@ -242,8 +244,13 @@
                         // If we have detailed percentiles, use them for a rich gradient
                         if (d.Percentiles && d.Percentiles.length === 21) {
                             const pValues = d.Percentiles.map(v => v / 1000000);
-                            const topY = scales.y.getPixelForValue(pValues[20]); // Max (P100)
-                            const bottomY = scales.y.getPixelForValue(pValues[0]); // Min (P0)
+
+                            // Bar boundaries (match barData logic)
+                            const p1Val = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : pValues[0]) / 1000000;
+                            const p99Val = (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : pValues[20]) / 1000000;
+
+                            const topY = scales.y.getPixelForValue(p99Val);
+                            const bottomY = scales.y.getPixelForValue(p1Val);
 
                             // Check for zero height or invalid range
                             if (Math.abs(topY - bottomY) < 0.1) return 'rgba(0,0,0,1)';
@@ -260,8 +267,9 @@
                                 const y = scales.y.getPixelForValue(val);
 
                                 // Calculate normalized position in the gradient [0, 1] relative to the bar height
-                                // The gradient is defined from topY to bottomY.
+                                // The gradient is defined from topY (P99) to bottomY (P1).
                                 let stop = (y - topY) / (bottomY - topY);
+                                // Clamp to [0, 1] - values outside P1-P99 (like P0 or P100) will be clipped to the ends
                                 stop = Math.max(0, Math.min(1, stop));
 
                                 // Color intensity:
@@ -301,9 +309,9 @@
                         }
 
                         // Fallback to simple gradient if Percentiles missing
-                        const minVal = (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS) / 1000000;
-                        const maxVal = (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS) / 1000000;
-                        const medianVal = (d.P50 !== undefined && d.P50 !== 0 ? d.P50 : d.AvgNS) / 1000000; // Fallback to Avg if needed
+                        const minVal = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS)) / 1000000;
+                        const maxVal = (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS)) / 1000000;
+                        const medianVal = (d.P50 !== undefined && d.P50 !== 0 ? d.P50 : d.AvgNS) / 1000000;
 
                         const yMin = scales.y.getPixelForValue(minVal);
                         const yMax = scales.y.getPixelForValue(maxVal);

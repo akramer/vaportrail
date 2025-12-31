@@ -204,9 +204,11 @@ type APIResult struct {
 	StdDevNS     float64
 	SumSqNS      float64
 	P0           float64
+	P1           float64
 	P25          float64
 	P50          float64
 	P75          float64
+	P99          float64
 	P100         float64
 	Percentiles  []float64 // 0th, 5th, 10th... 100th
 	TimeoutCount int64
@@ -276,9 +278,11 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 			td, err := db.DeserializeTDigest(res.TDigestData)
 			if err == nil {
 				apiRes.P0 = sanitizeFloat(td.Quantile(0.0))
+				apiRes.P1 = sanitizeFloat(td.Quantile(0.01))
 				apiRes.P25 = sanitizeFloat(td.Quantile(0.25))
 				apiRes.P50 = sanitizeFloat(td.Quantile(0.5))
 				apiRes.P75 = sanitizeFloat(td.Quantile(0.75))
+				apiRes.P99 = sanitizeFloat(td.Quantile(0.99))
 				apiRes.P100 = sanitizeFloat(td.Quantile(1.0))
 
 				// Calculate every 5th percentile
