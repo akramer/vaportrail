@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+// Runner defines the interface for running a probe.
+type Runner interface {
+	Run(cfg Config) (float64, error)
+}
+
+// RealRunner implements Runner using the actual system commands.
+type RealRunner struct{}
+
+func (r RealRunner) Run(cfg Config) (float64, error) {
+	return Run(cfg)
+}
+
 // Config defines how to run a probe and parse its output.
 type Config struct {
 	Command string   `json:"command"` // Command to execute, e.g. "ping", "curl"

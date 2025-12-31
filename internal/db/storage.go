@@ -8,6 +8,17 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type Store interface {
+	AddTarget(t *Target) (int64, error)
+	UpdateTarget(t *Target) error
+	GetTargets() ([]Target, error)
+	DeleteTarget(id int64) error
+	AddResult(r *Result) error
+	GetResults(targetID int64, limit int) ([]Result, error)
+	GetResultsByTime(targetID int64, start, end time.Time) ([]Result, error)
+	Close() error
+}
+
 type DB struct {
 	*sql.DB
 }

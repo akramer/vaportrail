@@ -13,17 +13,20 @@ import (
 )
 
 type Scheduler struct {
-	db        *db.DB
+	db          db.Store
+	probeRunner probe.Runner
+
 	mu        sync.Mutex
 	stopChans map[int64]chan struct{}
 	Clock     clockwork.Clock
 }
 
-func New(database *db.DB) *Scheduler {
+func New(database db.Store) *Scheduler {
 	return &Scheduler{
-		db:        database,
-		stopChans: make(map[int64]chan struct{}),
-		Clock:     clockwork.NewRealClock(),
+		db:          database,
+		probeRunner: probe.RealRunner{},
+		stopChans:   make(map[int64]chan struct{}),
+		Clock:       clockwork.NewRealClock(),
 	}
 }
 
@@ -177,7 +180,7 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 			go func() {
 				defer wg.Done()
 				defer func() { <-sem }() // Release
-				res, err := probe.Run(cfg)
+				res, err := s.probeRunner.Run(cfg)
 				if err != nil {
 					log.Printf("Probe failed for %s: %v", t.Name, err)
 					return
