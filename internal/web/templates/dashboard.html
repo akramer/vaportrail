@@ -34,8 +34,8 @@
 
         <span>Graph Mode: </span>
         <select id="graph-mode" onchange="changeGraphMode(this.value)">
-            <option value="line">Line Chart</option>
             <option value="heatmap">Heatmap</option>
+            <option value="line">Line Chart</option>
         </select>
 
         <span style="margin-left: 20px;">Start:</span>
@@ -90,7 +90,7 @@
 
     <script>
         let currentTargets = []; // Store targets globally for easy access
-        let currentGraphMode = 'line';
+        let currentGraphMode = 'heatmap';
 
         // Initialize time inputs
         function initTimeInputs() {
