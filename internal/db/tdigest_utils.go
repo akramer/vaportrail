@@ -2,31 +2,20 @@ package db
 
 import (
 	"bytes"
-	"encoding/gob"
 
-	"github.com/influxdata/tdigest"
+	"github.com/caio/go-tdigest/v4"
 )
 
 // SerializeTDigest serializes the T-Digest to bytes for storage.
 func SerializeTDigest(td *tdigest.TDigest) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(td.Centroids())
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return td.AsBytes()
 }
 
 // DeserializeTDigest deserializes bytes to a T-Digest.
 func DeserializeTDigest(data []byte) (*tdigest.TDigest, error) {
-	buf := bytes.NewBuffer(data)
-	dec := gob.NewDecoder(buf)
-	var centroids tdigest.CentroidList
-	if err := dec.Decode(&centroids); err != nil {
-		return nil, err
+	// If empty data, return new empty digest
+	if len(data) == 0 {
+		return tdigest.New(tdigest.Compression(100))
 	}
-	td := tdigest.New()
-	td.AddCentroidList(centroids)
-	return td, nil
+	return tdigest.FromBytes(bytes.NewReader(data))
 }

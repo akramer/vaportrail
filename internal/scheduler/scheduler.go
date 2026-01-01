@@ -9,7 +9,7 @@ import (
 	"vaportrail/internal/db"
 	"vaportrail/internal/probe"
 
-	"github.com/influxdata/tdigest"
+	"github.com/caio/go-tdigest/v4"
 	"github.com/jonboulle/clockwork"
 )
 
@@ -108,7 +108,7 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 		sqSum        float64
 		minVal       float64 = math.MaxFloat64
 		maxVal       float64 = -math.MaxFloat64
-		td                   = tdigest.New()
+		td, _                = tdigest.New(tdigest.Compression(100))
 	)
 
 	// Start Aggregation Loop
@@ -132,7 +132,7 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				if val > maxVal {
 					maxVal = val
 				}
-				td.Add(val, 1)
+				td.Add(val)
 
 			case <-commitTicker.Chan():
 				if count == 0 && timeoutCount == 0 {
@@ -186,7 +186,7 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				sqSum = 0
 				minVal = math.MaxFloat64
 				maxVal = -math.MaxFloat64
-				td = tdigest.New()
+				td, _ = tdigest.New(tdigest.Compression(100))
 			}
 		}
 	}()
