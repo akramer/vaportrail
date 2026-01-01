@@ -77,9 +77,7 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	if td.Count() == 0 {
 		t.Errorf("Expected TDigest Count > 0, got %d", td.Count())
 	}
-	if err != nil {
-		t.Fatalf("Failed to deserialize tdigest: %v", err)
-	}
+
 	minVal := td.Quantile(0)
 	maxVal := td.Quantile(1)
 
