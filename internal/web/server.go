@@ -261,12 +261,11 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	// Initialize as empty slice so it marshals to [] instead of null
 	apiResults := []APIResult{}
+
 	for _, res := range dbResults {
 		apiRes := APIResult{
 			Time:         res.Time,
 			TargetID:     res.TargetID,
-			MinNS:        res.MinNS,
-			MaxNS:        res.MaxNS,
 			AvgNS:        res.AvgNS,
 			StdDevNS:     res.StdDevNS,
 			SumSqNS:      res.SumSqNS,
@@ -284,6 +283,9 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 				apiRes.P75 = sanitizeFloat(td.Quantile(0.75))
 				apiRes.P99 = sanitizeFloat(td.Quantile(0.99))
 				apiRes.P100 = sanitizeFloat(td.Quantile(1.0))
+
+				apiRes.MinNS = int64(apiRes.P0)
+				apiRes.MaxNS = int64(apiRes.P100)
 
 				// Calculate every 5th percentile
 				apiRes.Percentiles = make([]float64, 21)

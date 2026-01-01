@@ -106,9 +106,7 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 		timeoutCount int64
 		sum          float64
 		sqSum        float64
-		minVal       float64 = math.MaxFloat64
-		maxVal       float64 = -math.MaxFloat64
-		td, _                = tdigest.New(tdigest.Compression(100))
+		td, _        = tdigest.New(tdigest.Compression(100))
 	)
 
 	// Start Aggregation Loop
@@ -126,12 +124,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				count++
 				sum += val
 				sqSum += val * val
-				if val < minVal {
-					minVal = val
-				}
-				if val > maxVal {
-					maxVal = val
-				}
 				td.Add(val)
 
 			case <-commitTicker.Chan():
@@ -148,10 +140,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 						variance = 0
 					}
 					stdDev = math.Sqrt(variance)
-				} else {
-					// No successful probes, only timeouts
-					minVal = 0
-					maxVal = 0
 				}
 
 				tdData, err := db.SerializeTDigest(td)
@@ -163,8 +151,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				dbRes := &db.Result{
 					Time:         s.Clock.Now().UTC(),
 					TargetID:     t.ID,
-					MinNS:        int64(minVal),
-					MaxNS:        int64(maxVal),
 					AvgNS:        int64(avg),
 					StdDevNS:     stdDev,
 					SumSqNS:      sqSum,
@@ -184,8 +170,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				timeoutCount = 0
 				sum = 0
 				sqSum = 0
-				minVal = math.MaxFloat64
-				maxVal = -math.MaxFloat64
 				td, _ = tdigest.New(tdigest.Compression(100))
 			}
 		}

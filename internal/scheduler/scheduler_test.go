@@ -70,8 +70,16 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	if r.ProbeCount == 0 {
 		t.Errorf("Expected ProbeCount > 0, got %d", r.ProbeCount)
 	}
-	if r.MinNS != 500 || r.MaxNS != 500 {
-		t.Errorf("Expected Min/Max 500, got Min=%d Max=%d", r.MinNS, r.MaxNS)
+
+	td, err := db.DeserializeTDigest(r.TDigestData)
+	if err != nil {
+		t.Fatalf("Failed to deserialize tdigest: %v", err)
+	}
+	minVal := td.Quantile(0)
+	maxVal := td.Quantile(1)
+
+	if minVal != 500.0 || maxVal != 500.0 {
+		t.Errorf("Expected Min/Max 500, got Min=%v Max=%v", minVal, maxVal)
 	}
 
 	s.RemoveTarget(id)

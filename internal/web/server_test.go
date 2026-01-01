@@ -42,19 +42,16 @@ func TestHandleGetResults(t *testing.T) {
 
 	// Add some results
 	now := time.Now()
+
 	r1 := &db.Result{
 		Time:       now.Add(-2 * time.Hour),
 		TargetID:   id,
-		MinNS:      1000,
-		MaxNS:      2000,
 		AvgNS:      1500,
 		ProbeCount: 1,
 	}
 	r2 := &db.Result{
 		Time:       now.Add(-30 * time.Minute),
 		TargetID:   id,
-		MinNS:      1000,
-		MaxNS:      2000,
 		AvgNS:      1500,
 		ProbeCount: 1,
 	}
