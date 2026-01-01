@@ -66,12 +66,17 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	}
 
 	// Verify the data
+	// Verify the data
 	r := results[0]
-	if r.ProbeCount == 0 {
-		t.Errorf("Expected ProbeCount > 0, got %d", r.ProbeCount)
-	}
 
 	td, err := db.DeserializeTDigest(r.TDigestData)
+	if err != nil {
+		t.Fatalf("Failed to deserialize tdigest: %v", err)
+	}
+
+	if td.Count() == 0 {
+		t.Errorf("Expected TDigest Count > 0, got %d", td.Count())
+	}
 	if err != nil {
 		t.Fatalf("Failed to deserialize tdigest: %v", err)
 	}
@@ -196,10 +201,6 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 
 	if r.TimeoutCount == 0 {
 		t.Errorf("Expected TimeoutCount > 0, got %d", r.TimeoutCount)
-	}
-
-	if r.ProbeCount != 0 {
-		t.Errorf("Expected ProbeCount == 0 for all timeouts, got %d", r.ProbeCount)
 	}
 
 	s.RemoveTarget(id)

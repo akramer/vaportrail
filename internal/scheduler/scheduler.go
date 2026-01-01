@@ -154,7 +154,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 					AvgNS:        int64(avg),
 					StdDevNS:     stdDev,
 					SumSqNS:      sqSum,
-					ProbeCount:   count,
 					TimeoutCount: timeoutCount,
 					TDigestData:  tdData,
 				}

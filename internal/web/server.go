@@ -270,12 +270,13 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 			StdDevNS:     res.StdDevNS,
 			SumSqNS:      res.SumSqNS,
 			TimeoutCount: res.TimeoutCount,
-			ProbeCount:   res.ProbeCount,
+			ProbeCount:   0, // Will be populated from TDigest if available
 		}
 
 		if len(res.TDigestData) > 0 {
 			td, err := db.DeserializeTDigest(res.TDigestData)
 			if err == nil {
+				apiRes.ProbeCount = int64(td.Count())
 				apiRes.P0 = sanitizeFloat(td.Quantile(0.0))
 				apiRes.P1 = sanitizeFloat(td.Quantile(0.01))
 				apiRes.P25 = sanitizeFloat(td.Quantile(0.25))
