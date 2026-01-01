@@ -266,7 +266,6 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		apiRes := APIResult{
 			Time:         res.Time,
 			TargetID:     res.TargetID,
-			AvgNS:        res.AvgNS,
 			StdDevNS:     res.StdDevNS,
 			SumSqNS:      res.SumSqNS,
 			TimeoutCount: res.TimeoutCount,
@@ -276,6 +275,17 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		if len(res.TDigestData) > 0 {
 			td, err := db.DeserializeTDigest(res.TDigestData)
 			if err == nil {
+				// Compute average from centroids
+				var totalMass, weightedSum float64
+				td.ForEachCentroid(func(mean float64, count uint64) bool {
+					totalMass += float64(count)
+					weightedSum += mean * float64(count)
+					return true
+				})
+				if totalMass > 0 {
+					apiRes.AvgNS = int64(weightedSum / totalMass)
+				}
+
 				apiRes.ProbeCount = int64(td.Count())
 				apiRes.P0 = sanitizeFloat(td.Quantile(0.0))
 				apiRes.P1 = sanitizeFloat(td.Quantile(0.01))

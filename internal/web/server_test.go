@@ -46,12 +46,10 @@ func TestHandleGetResults(t *testing.T) {
 	r1 := &db.Result{
 		Time:     now.Add(-2 * time.Hour),
 		TargetID: id,
-		AvgNS:    1500,
 	}
 	r2 := &db.Result{
 		Time:     now.Add(-30 * time.Minute),
 		TargetID: id,
-		AvgNS:    1500,
 	}
 	if err := database.AddResult(r1); err != nil {
 		t.Fatalf("Failed to add result 1: %v", err)

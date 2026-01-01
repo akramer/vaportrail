@@ -54,7 +54,6 @@ func (d *DB) init() error {
 		`CREATE TABLE IF NOT EXISTS results (
 			time DATETIME NOT NULL,
 			target_id INTEGER NOT NULL,
-			avg_ns INTEGER,
 			stddev_ns REAL,
 			sum_sq_ns REAL,
 			timeout_count INTEGER DEFAULT 0,
@@ -88,7 +87,6 @@ type Target struct {
 type Result struct {
 	Time         time.Time
 	TargetID     int64
-	AvgNS        int64
 	StdDevNS     float64
 	SumSqNS      float64
 	TimeoutCount int64
@@ -129,9 +127,9 @@ func (d *DB) UpdateTarget(t *Target) error {
 }
 
 func (d *DB) AddResult(r *Result) error {
-	_, err := d.Exec(`INSERT INTO results (time, target_id, avg_ns, stddev_ns, sum_sq_ns, timeout_count, tdigest_data) 
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.Time, r.TargetID, r.AvgNS, r.StdDevNS, r.SumSqNS, r.TimeoutCount, r.TDigestData)
+	_, err := d.Exec(`INSERT INTO results (time, target_id, stddev_ns, sum_sq_ns, timeout_count, tdigest_data) 
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		r.Time, r.TargetID, r.StdDevNS, r.SumSqNS, r.TimeoutCount, r.TDigestData)
 	return err
 }
 
@@ -154,7 +152,7 @@ func (d *DB) GetTargets() ([]Target, error) {
 }
 
 func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
-	rows, err := d.Query(`SELECT time, target_id, avg_ns, stddev_ns, sum_sq_ns, timeout_count, tdigest_data 
+	rows, err := d.Query(`SELECT time, target_id, stddev_ns, sum_sq_ns, timeout_count, tdigest_data 
 		FROM results WHERE target_id = ? ORDER BY time DESC LIMIT ?`, targetID, limit)
 	if err != nil {
 		return nil, err
@@ -164,7 +162,7 @@ func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Time, &r.TargetID, &r.AvgNS, &r.StdDevNS, &r.SumSqNS, &r.TimeoutCount, &r.TDigestData); err != nil {
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.StdDevNS, &r.SumSqNS, &r.TimeoutCount, &r.TDigestData); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -173,7 +171,7 @@ func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
 }
 
 func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, error) {
-	rows, err := d.Query(`SELECT time, target_id, avg_ns, stddev_ns, sum_sq_ns, timeout_count, tdigest_data 
+	rows, err := d.Query(`SELECT time, target_id, stddev_ns, sum_sq_ns, timeout_count, tdigest_data 
 		FROM results WHERE target_id = ? AND time >= ? AND time <= ? ORDER BY time ASC`, targetID, start, end)
 	if err != nil {
 		return nil, err
@@ -183,7 +181,7 @@ func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, e
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Time, &r.TargetID, &r.AvgNS, &r.StdDevNS, &r.SumSqNS, &r.TimeoutCount, &r.TDigestData); err != nil {
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.StdDevNS, &r.SumSqNS, &r.TimeoutCount, &r.TDigestData); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
