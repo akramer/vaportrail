@@ -83,6 +83,15 @@ func Run(cfg Config) (float64, error) {
 		return 0, fmt.Errorf("unknown probe type: %s", cfg.Type)
 	}
 
+	// If success, enforce timeout check. Sometimes net calls might return success slightly after timeout?
+	// Or maybe the precision of float64 ns vs duration?
+	// Let's be strict.
+	if err == nil {
+		if res >= float64(cfg.Timeout.Nanoseconds()) {
+			return 0, fmt.Errorf("probe timed out: duration %v exceeded limit %v", time.Duration(res), cfg.Timeout)
+		}
+	}
+
 	if err != nil {
 		if strings.Contains(err.Error(), "probe timed out") {
 			return 0, err
