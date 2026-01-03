@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	cfg := config.DefaultConfig()
+	cfg := config.Load()
 	log.Printf("Starting VaporTrail on port %d...", cfg.HTTPPort)
 	log.Printf("Using database at %s", cfg.DBPath)
 
