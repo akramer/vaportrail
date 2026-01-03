@@ -1,0 +1,10 @@
+.git
+.gitignore
+vaportrail
+vaportrail.db
+vaportrail.db.bak
+output.json
+*.md
+.DS_Store
+.vscode
+Dockerfile
