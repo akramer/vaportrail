@@ -33,11 +33,12 @@ COPY --from=builder /app/vaportrail .
 EXPOSE 8080
 
 # Environment variables
+# Environment variables
 ENV VAPORTRAIL_HTTP_PORT=8080
-ENV VAPORTRAIL_DB_PATH=/app/data/vaportrail.db
+ENV VAPORTRAIL_DB_PATH=/config/vaportrail.db
 
 # Create a volume for persistent data
-VOLUME ["/app/data"]
+VOLUME ["/config"]
 
 # Run the binary
 CMD ["./vaportrail"]
