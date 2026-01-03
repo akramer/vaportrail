@@ -159,7 +159,7 @@ func runDNS(ctx context.Context, address string) (float64, error) {
 
 	start := time.Now()
 	// querying for "example.com" A record
-	_, err := resolver.LookupHost(ctx, "example.com")
+	_, err := resolver.LookupIP(ctx, "ip4", "example.com")
 	if err != nil {
 		return 0, err
 	}

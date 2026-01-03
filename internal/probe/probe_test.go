@@ -2,6 +2,7 @@ package probe
 
 import (
 	"testing"
+	"time"
 )
 
 func TestGetConfig(t *testing.T) {
@@ -82,4 +83,55 @@ func TestGetConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunDNS(t *testing.T) {
+	// This test relies on external connectivity and a working DNS server at 8.8.8.8.
+	// In a purely hermetic environment, this should be mocked, but for now we test broadly.
+	if testing.Short() {
+		t.Skip("skipping network test in short mode")
+	}
+
+	cfg := Config{
+		Type:    "dns",
+		Address: "8.8.8.8",
+		Timeout: 2 * time.Second,
+	}
+
+	// We pass a context with timeout to Run mainly via cfg.Timeout, but Run creates its own child context.
+	// Actually typical use is:
+	// val, err := Run(cfg)
+
+	start := time.Now()
+	val, err := Run(cfg)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Run(dns) failed: %v", err)
+	}
+
+	if val <= 0 {
+		t.Errorf("expected positive latency, got %v", val)
+	}
+
+	// Verify we didn't just sleep and return 0
+	t.Logf("DNS Probe took %v ns (%.2f ms), total test time %v", val, val/1e6, elapsed)
+}
+
+func TestRunDNS_LookupIP_Integration(t *testing.T) {
+	// Explicitly verify runDNS acts as expected with the new code path
+	// This calls the internal runDNS function if we export it or just via Run.
+	// Since runDNS is unexported, we test via Run.
+
+	cfg := Config{
+		Type:    "dns",
+		Address: "1.1.1.1", // Cloudflare
+		Timeout: 2 * time.Second,
+	}
+
+	val, err := Run(cfg)
+	if err != nil {
+		t.Fatalf("Run(dns) failed against 1.1.1.1: %v", err)
+	}
+	t.Logf("DNS Probe -> 1.1.1.1 took %.2f ms", val/1e6)
 }
