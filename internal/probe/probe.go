@@ -53,6 +53,24 @@ func GetConfig(probeType, address string) (Config, error) {
 		cfg.Args = []string{"-c", "1", address}
 		cfg.Pattern = "time=(?P<val>[0-9.]+) ms"
 		cfg.Multiplier = 1000000
+	case "dig":
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			// If SplitHostPort fails, it's likely missing a port, so use the whole address string as the host
+			// or it's a format issue we can't parse, so we fallback to assuming it's just the host.
+			host = address
+			port = ""
+		}
+		args := []string{"@" + host}
+		if port != "" {
+			args = append(args, "-p", port)
+		}
+		args = append(args, "example.com", "A")
+
+		cfg.Command = "dig"
+		cfg.Args = args
+		cfg.Pattern = "Query time: (?P<val>[0-9]+) msec"
+		cfg.Multiplier = 1000000
 	case "http", "dns":
 		// Native implementations don't need Command/Args/Pattern
 	default:
@@ -77,7 +95,7 @@ func Run(cfg Config) (float64, error) {
 		res, err = runHTTP(ctx, cfg.Address)
 	case "dns":
 		res, err = runDNS(ctx, cfg.Address)
-	case "ping":
+	case "ping", "dig":
 		res, err = runCommand(ctx, cfg)
 	default:
 		return 0, fmt.Errorf("unknown probe type: %s", cfg.Type)

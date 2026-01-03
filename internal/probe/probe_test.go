@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -69,6 +70,24 @@ func TestGetConfig(t *testing.T) {
 			wantErr:   true,
 			check:     nil,
 		},
+		{
+			name:      "Valid Dig",
+			probeType: "dig",
+			address:   "8.8.8.8",
+			wantErr:   false,
+			check: func(t *testing.T, c Config) {
+				if c.Type != "dig" {
+					t.Errorf("expected type dig, got %s", c.Type)
+				}
+				if c.Command != "dig" {
+					t.Errorf("expected command dig, got %s", c.Command)
+				}
+				// args should be @8.8.8.8 example.com A
+				if len(c.Args) < 3 || c.Args[0] != "@8.8.8.8" {
+					t.Errorf("expected arg @8.8.8.8, got %v", c.Args)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -134,4 +153,42 @@ func TestRunDNS_LookupIP_Integration(t *testing.T) {
 		t.Fatalf("Run(dns) failed against 1.1.1.1: %v", err)
 	}
 	t.Logf("DNS Probe -> 1.1.1.1 took %.2f ms", val/1e6)
+}
+
+func TestRunDig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network test in short mode")
+	}
+
+	// We need 'dig' installed for this to work.
+	// Since we verified it in the previous step, we can try running it.
+	// However, if the environment doesn't have it (e.g. CI without the docker image), it might fail.
+	// We'll check if exec.LookPath finds it first.
+	_, err := exec.LookPath("dig")
+	if err != nil {
+		t.Skip("dig not found in path")
+	}
+
+	cfg := Config{
+		Type:    "dig",
+		Address: "8.8.8.8",
+		Timeout: 5 * time.Second,
+	}
+
+	// First ensure we interpret configuration correctly
+	cfg, err = GetConfig(cfg.Type, cfg.Address)
+	if err != nil {
+		t.Fatalf("Failed to get config: %v", err)
+	}
+	cfg.Timeout = 5 * time.Second
+
+	val, err := Run(cfg)
+	if err != nil {
+		t.Fatalf("Run(dig) failed: %v", err)
+	}
+
+	if val <= 0 {
+		t.Errorf("expected positive latency, got %v", val)
+	}
+	t.Logf("Dig Probe -> 8.8.8.8 took %.2f ms", val/1e6)
 }
