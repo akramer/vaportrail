@@ -201,8 +201,6 @@ type APIResult struct {
 	MinNS        int64
 	MaxNS        int64
 	AvgNS        int64
-	StdDevNS     float64
-	SumSqNS      float64
 	P0           float64
 	P1           float64
 	P25          float64
@@ -266,8 +264,6 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		apiRes := APIResult{
 			Time:         res.Time,
 			TargetID:     res.TargetID,
-			StdDevNS:     res.StdDevNS,
-			SumSqNS:      res.SumSqNS,
 			TimeoutCount: res.TimeoutCount,
 			ProbeCount:   0, // Will be populated from TDigest if available
 		}

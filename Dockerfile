@@ -22,7 +22,7 @@ RUN CGO_ENABLED=1 go build -ldflags="-w -s" -o vaportrail ./cmd/vaportrail
 FROM debian:bookworm-slim
 
 # Install ca-certificates for HTTPS probes and sqlite3 library dependencies
-RUN apt-get update && apt-get install -y ca-certificates iputils-ping bind9-dnsutils && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates iputils-ping bind9-dnsutils sqlite3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

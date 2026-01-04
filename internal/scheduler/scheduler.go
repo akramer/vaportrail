@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"log"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -104,8 +103,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 	var (
 		count        int64
 		timeoutCount int64
-		sum          float64
-		sqSum        float64
 		td, _        = tdigest.New(tdigest.Compression(100))
 	)
 
@@ -122,24 +119,11 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 					continue
 				}
 				count++
-				sum += val
-				sqSum += val * val
 				td.Add(val)
 
 			case <-commitTicker.Chan():
 				if count == 0 && timeoutCount == 0 {
 					continue
-				}
-
-				// Make a copy or calculate stats
-				var avg, stdDev, variance float64
-				if count > 0 {
-					avg = sum / float64(count)
-					variance = (sqSum / float64(count)) - (avg * avg)
-					if variance < 0 {
-						variance = 0
-					}
-					stdDev = math.Sqrt(variance)
 				}
 
 				tdData, err := db.SerializeTDigest(td)
@@ -151,8 +135,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 				dbRes := &db.Result{
 					Time:         s.Clock.Now().UTC(),
 					TargetID:     t.ID,
-					StdDevNS:     stdDev,
-					SumSqNS:      sqSum,
 					TimeoutCount: timeoutCount,
 					TDigestData:  tdData,
 				}
@@ -163,11 +145,8 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 					log.Printf("Saved result for %s (count=%d, timeouts=%d)", t.Name, count, timeoutCount)
 				}
 
-				// Reset stats
 				count = 0
 				timeoutCount = 0
-				sum = 0
-				sqSum = 0
 				td, _ = tdigest.New(tdigest.Compression(100))
 			}
 		}

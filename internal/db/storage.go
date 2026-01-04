@@ -5,8 +5,17 @@ import (
 	"fmt"
 	"time"
 
+	"embed"
+	"errors"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+//go:embed migrations/*.sql
+var fs embed.FS
 
 type Store interface {
 	AddTarget(t *Target) (int64, error)
@@ -40,34 +49,23 @@ func New(path string) (*DB, error) {
 }
 
 func (d *DB) init() error {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS targets (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL,
-			address TEXT NOT NULL,
-			probe_type TEXT NOT NULL,
-			probe_config JSON NOT NULL,
-			probe_interval REAL DEFAULT 1.0,
-			commit_interval REAL DEFAULT 60.0,
-			timeout REAL DEFAULT 5.0
-		);`,
-		`CREATE TABLE IF NOT EXISTS results (
-			time DATETIME NOT NULL,
-			target_id INTEGER NOT NULL,
-			stddev_ns REAL,
-			sum_sq_ns REAL,
-			timeout_count INTEGER DEFAULT 0,
-			tdigest_data BLOB,
-			FOREIGN KEY(target_id) REFERENCES targets(id)
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_results_time ON results(time);`,
-		`CREATE INDEX IF NOT EXISTS idx_results_target ON results(target_id);`,
+	driver, err := sqlite3.WithInstance(d.DB, &sqlite3.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to create sqlite3 driver: %w", err)
 	}
 
-	for _, q := range queries {
-		if _, err := d.Exec(q); err != nil {
-			return fmt.Errorf("init query failed: %w", err)
-		}
+	src, err := iofs.New(fs, "migrations")
+	if err != nil {
+		return fmt.Errorf("failed to create iofs source: %w", err)
+	}
+
+	m, err := migrate.NewWithInstance("iofs", src, "sqlite3", driver)
+	if err != nil {
+		return fmt.Errorf("failed to create migrate instance: %w", err)
+	}
+
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	return nil
@@ -87,8 +85,6 @@ type Target struct {
 type Result struct {
 	Time         time.Time
 	TargetID     int64
-	StdDevNS     float64
-	SumSqNS      float64
 	TimeoutCount int64
 	TDigestData  []byte
 }
@@ -127,9 +123,9 @@ func (d *DB) UpdateTarget(t *Target) error {
 }
 
 func (d *DB) AddResult(r *Result) error {
-	_, err := d.Exec(`INSERT INTO results (time, target_id, stddev_ns, sum_sq_ns, timeout_count, tdigest_data) 
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		r.Time, r.TargetID, r.StdDevNS, r.SumSqNS, r.TimeoutCount, r.TDigestData)
+	_, err := d.Exec(`INSERT INTO results (time, target_id, timeout_count, tdigest_data) 
+		VALUES (?, ?, ?, ?)`,
+		r.Time, r.TargetID, r.TimeoutCount, r.TDigestData)
 	return err
 }
 
@@ -152,7 +148,7 @@ func (d *DB) GetTargets() ([]Target, error) {
 }
 
 func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
-	rows, err := d.Query(`SELECT time, target_id, stddev_ns, sum_sq_ns, timeout_count, tdigest_data 
+	rows, err := d.Query(`SELECT time, target_id, timeout_count, tdigest_data 
 		FROM results WHERE target_id = ? ORDER BY time DESC LIMIT ?`, targetID, limit)
 	if err != nil {
 		return nil, err
@@ -162,7 +158,7 @@ func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Time, &r.TargetID, &r.StdDevNS, &r.SumSqNS, &r.TimeoutCount, &r.TDigestData); err != nil {
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.TimeoutCount, &r.TDigestData); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -171,7 +167,7 @@ func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {
 }
 
 func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, error) {
-	rows, err := d.Query(`SELECT time, target_id, stddev_ns, sum_sq_ns, timeout_count, tdigest_data 
+	rows, err := d.Query(`SELECT time, target_id, timeout_count, tdigest_data 
 		FROM results WHERE target_id = ? AND time >= ? AND time <= ? ORDER BY time ASC`, targetID, start, end)
 	if err != nil {
 		return nil, err
@@ -181,7 +177,7 @@ func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, e
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Time, &r.TargetID, &r.StdDevNS, &r.SumSqNS, &r.TimeoutCount, &r.TDigestData); err != nil {
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.TimeoutCount, &r.TDigestData); err != nil {
 			return nil, err
 		}
 		results = append(results, r)

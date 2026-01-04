@@ -492,7 +492,6 @@
                                         const p50 = (d.P50 / 1000000).toFixed(2);
                                         const p75 = (d.P75 / 1000000).toFixed(2);
                                         const p100 = (d.P100 / 1000000).toFixed(2);
-                                        const stdDev = (d.StdDevNS / 1000000).toFixed(2);
 
                                         return [
                                             `Max: ${p100} ms`,
@@ -500,7 +499,6 @@
                                             `Median: ${p50} ms`,
                                             `Q1: ${p25} ms`,
                                             `Min: ${p0} ms`,
-                                            `StdDev: ${stdDev} ms`,
                                             `Success: ${d.ProbeCount}`,
                                             `Timeout: ${d.TimeoutCount}`
                                         ];
