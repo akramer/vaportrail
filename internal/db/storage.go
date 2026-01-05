@@ -269,15 +269,14 @@ func (d *DB) AddAggregatedResult(r *AggregatedResult) error {
 }
 
 func (d *DB) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error) {
-	var nt sql.NullTime
-	err := d.QueryRow(`SELECT MAX(time) FROM aggregated_results WHERE target_id = ? AND window_seconds = ?`, targetID, windowSeconds).Scan(&nt)
+	var ns sql.NullString
+	err := d.QueryRow(`SELECT MAX(time) FROM aggregated_results WHERE target_id = ? AND window_seconds = ?`, targetID, windowSeconds).Scan(&ns)
 	if err != nil {
-		return time.Time{}, err // Returns zero time if table empty or other error, caller should handle. Wait, if empty table, MAX returns NULL.
+		return time.Time{}, err
 	}
-	if nt.Valid {
-		return nt.Time, nil
+	if ns.Valid {
+		return parseDBTime(ns.String)
 	}
-	// If NULL (no rows), return zero time.
 	return time.Time{}, nil
 }
 
@@ -329,13 +328,30 @@ func (d *DB) DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cu
 }
 
 func (d *DB) GetEarliestRawResultTime(targetID int64) (time.Time, error) {
-	var nt sql.NullTime
-	err := d.QueryRow(`SELECT MIN(time) FROM raw_results WHERE target_id = ?`, targetID).Scan(&nt)
+	var ns sql.NullString
+	err := d.QueryRow(`SELECT MIN(time) FROM raw_results WHERE target_id = ?`, targetID).Scan(&ns)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if nt.Valid {
-		return nt.Time, nil
+	if ns.Valid {
+		return parseDBTime(ns.String)
 	}
 	return time.Time{}, nil
+}
+
+func parseDBTime(s string) (time.Time, error) {
+	// Try standard formats
+	// SQLite driver usually uses RFC3339Nano or similar
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("failed to parse DB time: %s", s)
 }
