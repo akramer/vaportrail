@@ -240,7 +240,7 @@
                         maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         scales: {
-                            x: { type: 'time', time: { unit: 'minute' } },
+                            x: { type: 'timeseries', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
                             y: { type: 'linear', display: true, title: { display: true, text: 'Latency (ms)' } }
                         },
                         plugins: {
@@ -311,7 +311,7 @@
                         maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         scales: {
-                            x: { type: 'time', time: { unit: 'minute' } },
+                            x: { type: 'timeseries', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } } },
                             y: { type: 'linear', display: true, position: 'left', beginAtZero: true },
                             y1: { type: 'linear', display: true, position: 'right', beginAtZero: true, min: 0, max: 100, grid: { drawOnChartArea: false } }
                         },

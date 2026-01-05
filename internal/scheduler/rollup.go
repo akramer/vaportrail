@@ -204,6 +204,7 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 	// Source Data Fetching
 	var tDigest *tdigest.TDigest
 	var timeoutCount int64
+	var rowsProcessed int
 	var err error
 
 	if sourceWindow == 0 {
@@ -213,6 +214,7 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 			log.Printf("RollupManager: Error fetching raw results: %v", err)
 			return
 		}
+		rowsProcessed = len(raws)
 		if len(raws) == 0 {
 			rm.saveEmptyRollup(t, windowSeconds, start)
 			return
@@ -239,6 +241,7 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 			log.Printf("RollupManager: Error fetching aggregated results (w=%d): %v", sourceWindow, err)
 			return
 		}
+		rowsProcessed = len(results)
 		if len(results) == 0 {
 			rm.saveEmptyRollup(t, windowSeconds, start)
 			return
@@ -272,6 +275,8 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 
 	if err := rm.db.AddAggregatedResult(agg); err != nil {
 		log.Printf("RollupManager: Failed to save AggResult: %v", err)
+	} else {
+		log.Printf("RollupManager: Aggregated %s (w=%ds): %d rows, %d timeouts", t.Name, windowSeconds, rowsProcessed, timeoutCount)
 	}
 }
 
