@@ -27,6 +27,16 @@ type Store interface {
 	GetResults(targetID int64, limit int) ([]Result, error)
 	GetResultsByTime(targetID int64, start, end time.Time) ([]Result, error)
 	Close() error
+
+	// New methods
+	AddRawResults(results []RawResult) error
+	AddAggregatedResult(r *AggregatedResult) error
+	GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error)
+	GetRawResults(targetID int64, start, end time.Time) ([]RawResult, error)
+	GetAggregatedResults(targetID int64, windowSeconds int, start, end time.Time) ([]AggregatedResult, error)
+	DeleteRawResultsBefore(targetID int64, cutoff time.Time) error
+	DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error
+	GetEarliestRawResultTime(targetID int64) (time.Time, error)
 }
 
 type DB struct {
@@ -73,14 +83,15 @@ func (d *DB) init() error {
 }
 
 type Target struct {
-	ID             int64
-	Name           string
-	Address        string
-	ProbeType      string
-	ProbeConfig    string // JSON
-	ProbeInterval  float64
-	CommitInterval float64
-	Timeout        float64
+	ID                int64
+	Name              string
+	Address           string
+	ProbeType         string
+	ProbeConfig       string // JSON
+	ProbeInterval     float64
+	CommitInterval    float64
+	Timeout           float64
+	RetentionPolicies string // JSON
 }
 
 type Result struct {
@@ -88,6 +99,20 @@ type Result struct {
 	TargetID     int64
 	TimeoutCount int64
 	TDigestData  []byte
+}
+
+type RawResult struct {
+	Time     time.Time
+	TargetID int64
+	Latency  float64
+}
+
+type AggregatedResult struct {
+	Time          time.Time
+	TargetID      int64
+	WindowSeconds int
+	TDigestData   []byte
+	TimeoutCount  int64
 }
 
 func (d *DB) AddTarget(t *Target) (int64, error) {
@@ -100,8 +125,8 @@ func (d *DB) AddTarget(t *Target) (int64, error) {
 	if t.Timeout <= 0 {
 		t.Timeout = 5.0
 	}
-	res, err := d.Exec(`INSERT INTO targets (name, address, probe_type, probe_config, probe_interval, commit_interval, timeout) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Address, t.ProbeType, t.ProbeConfig, t.ProbeInterval, t.CommitInterval, t.Timeout)
+	res, err := d.Exec(`INSERT INTO targets (name, address, probe_type, probe_config, probe_interval, commit_interval, timeout, retention_policies) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Address, t.ProbeType, t.ProbeConfig, t.ProbeInterval, t.CommitInterval, t.Timeout, t.RetentionPolicies)
 	if err != nil {
 		return 0, err
 	}
@@ -118,8 +143,8 @@ func (d *DB) UpdateTarget(t *Target) error {
 	if t.Timeout <= 0 {
 		t.Timeout = 5.0
 	}
-	_, err := d.Exec(`UPDATE targets SET name=?, address=?, probe_type=?, probe_interval=?, commit_interval=?, timeout=? WHERE id=?`,
-		t.Name, t.Address, t.ProbeType, t.ProbeInterval, t.CommitInterval, t.Timeout, t.ID)
+	_, err := d.Exec(`UPDATE targets SET name=?, address=?, probe_type=?, probe_interval=?, commit_interval=?, timeout=?, retention_policies=? WHERE id=?`,
+		t.Name, t.Address, t.ProbeType, t.ProbeInterval, t.CommitInterval, t.Timeout, t.RetentionPolicies, t.ID)
 	return err
 }
 
@@ -131,7 +156,7 @@ func (d *DB) AddResult(r *Result) error {
 }
 
 func (d *DB) GetTargets() ([]Target, error) {
-	rows, err := d.Query(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout FROM targets`)
+	rows, err := d.Query(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout, COALESCE(retention_policies, '[]') FROM targets`)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +165,7 @@ func (d *DB) GetTargets() ([]Target, error) {
 	var targets []Target
 	for rows.Next() {
 		var t Target
-		if err := rows.Scan(&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout, &t.RetentionPolicies); err != nil {
 			return nil, err
 		}
 		targets = append(targets, t)
@@ -150,8 +175,8 @@ func (d *DB) GetTargets() ([]Target, error) {
 
 func (d *DB) GetTarget(id int64) (*Target, error) {
 	var t Target
-	err := d.QueryRow(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout FROM targets WHERE id = ?`, id).Scan(
-		&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout,
+	err := d.QueryRow(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout, COALESCE(retention_policies, '[]') FROM targets WHERE id = ?`, id).Scan(
+		&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout, &t.RetentionPolicies,
 	)
 	if err != nil {
 		return nil, err
@@ -204,4 +229,113 @@ func (d *DB) DeleteTarget(id int64) error {
 	}
 	_, err = d.Exec(`DELETE FROM targets WHERE id = ?`, id)
 	return err
+}
+
+func (d *DB) AddRawResults(results []RawResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+
+	// Prepare statement for bulk insert
+	stmt, err := tx.Prepare(`INSERT INTO raw_results (time, target_id, latency) VALUES (?, ?, ?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range results {
+		_, err = stmt.Exec(r.Time, r.TargetID, r.Latency)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (d *DB) AddAggregatedResult(r *AggregatedResult) error {
+	_, err := d.Exec(`INSERT INTO aggregated_results (time, target_id, window_seconds, tdigest_data, timeout_count) 
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(time, target_id, window_seconds) DO UPDATE SET
+		tdigest_data=excluded.tdigest_data,
+		timeout_count=excluded.timeout_count`,
+		r.Time, r.TargetID, r.WindowSeconds, r.TDigestData, r.TimeoutCount)
+	return err
+}
+
+func (d *DB) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error) {
+	var nt sql.NullTime
+	err := d.QueryRow(`SELECT MAX(time) FROM aggregated_results WHERE target_id = ? AND window_seconds = ?`, targetID, windowSeconds).Scan(&nt)
+	if err != nil {
+		return time.Time{}, err // Returns zero time if table empty or other error, caller should handle. Wait, if empty table, MAX returns NULL.
+	}
+	if nt.Valid {
+		return nt.Time, nil
+	}
+	// If NULL (no rows), return zero time.
+	return time.Time{}, nil
+}
+
+func (d *DB) GetRawResults(targetID int64, start, end time.Time) ([]RawResult, error) {
+	rows, err := d.Query(`SELECT time, target_id, latency FROM raw_results 
+		WHERE target_id = ? AND time >= ? AND time < ? ORDER BY time ASC`, targetID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []RawResult
+	for rows.Next() {
+		var r RawResult
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.Latency); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
+	}
+	return res, nil
+}
+
+func (d *DB) GetAggregatedResults(targetID int64, windowSeconds int, start, end time.Time) ([]AggregatedResult, error) {
+	rows, err := d.Query(`SELECT time, target_id, window_seconds, tdigest_data, timeout_count 
+		FROM aggregated_results 
+		WHERE target_id = ? AND window_seconds = ? AND time >= ? AND time < ? ORDER BY time ASC`, targetID, windowSeconds, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []AggregatedResult
+	for rows.Next() {
+		var r AggregatedResult
+		if err := rows.Scan(&r.Time, &r.TargetID, &r.WindowSeconds, &r.TDigestData, &r.TimeoutCount); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
+	}
+	return res, nil
+}
+
+func (d *DB) DeleteRawResultsBefore(targetID int64, cutoff time.Time) error {
+	_, err := d.Exec(`DELETE FROM raw_results WHERE target_id = ? AND time < ?`, targetID, cutoff)
+	return err
+}
+
+func (d *DB) DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error {
+	_, err := d.Exec(`DELETE FROM aggregated_results WHERE target_id = ? AND window_seconds = ? AND time < ?`, targetID, windowSeconds, cutoff)
+	return err
+}
+
+func (d *DB) GetEarliestRawResultTime(targetID int64) (time.Time, error) {
+	var nt sql.NullTime
+	err := d.QueryRow(`SELECT MIN(time) FROM raw_results WHERE target_id = ?`, targetID).Scan(&nt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if nt.Valid {
+		return nt.Time, nil
+	}
+	return time.Time{}, nil
 }

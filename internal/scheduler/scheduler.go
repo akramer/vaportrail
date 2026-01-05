@@ -8,7 +8,6 @@ import (
 	"vaportrail/internal/db"
 	"vaportrail/internal/probe"
 
-	"github.com/caio/go-tdigest/v4"
 	"github.com/jonboulle/clockwork"
 )
 
@@ -16,17 +15,24 @@ type Scheduler struct {
 	db          db.Store
 	probeRunner probe.Runner
 
-	mu        sync.Mutex
-	stopChans map[int64]chan struct{}
-	Clock     clockwork.Clock
+	mu            sync.Mutex
+	stopChans     map[int64]chan struct{}
+	Clock         clockwork.Clock
+	rawResultChan chan db.RawResult
+
+	rollupManager    *RollupManager
+	retentionManager *RetentionManager
 }
 
 func New(database db.Store) *Scheduler {
 	return &Scheduler{
-		db:          database,
-		probeRunner: probe.RealRunner{},
-		stopChans:   make(map[int64]chan struct{}),
-		Clock:       clockwork.NewRealClock(),
+		db:               database,
+		probeRunner:      probe.RealRunner{},
+		stopChans:        make(map[int64]chan struct{}),
+		Clock:            clockwork.NewRealClock(),
+		rawResultChan:    make(chan db.RawResult, 1000), // Buffer size 1000
+		rollupManager:    NewRollupManager(database),
+		retentionManager: NewRetentionManager(database),
 	}
 }
 
@@ -40,7 +46,44 @@ func (s *Scheduler) Start() error {
 	for _, t := range targets {
 		s.AddTarget(t)
 	}
+
+	go s.runBatchWriter()
+	s.rollupManager.Start()
+	s.retentionManager.Start()
+
 	return nil
+}
+
+func (s *Scheduler) runBatchWriter() {
+	ticker := s.Clock.NewTicker(2 * time.Second) // Flush every 2 seconds
+	defer ticker.Stop()
+
+	var buffer []db.RawResult
+
+	flush := func() {
+		if len(buffer) == 0 {
+			return
+		}
+		if err := s.db.AddRawResults(buffer); err != nil {
+			log.Printf("Failed to flush raw results: %v", err)
+		} else {
+			// log.Printf("Flushed %d raw results", len(buffer))
+		}
+		buffer = nil // Reset buffer (allocating new slice is safer/easier than zeroing)
+		buffer = make([]db.RawResult, 0, 100)
+	}
+
+	for {
+		select {
+		case res := <-s.rawResultChan:
+			buffer = append(buffer, res)
+			if len(buffer) >= 500 { // Max batch size
+				flush()
+			}
+		case <-ticker.Chan():
+			flush()
+		}
+	}
 }
 
 func (s *Scheduler) AddTarget(t db.Target) {
@@ -87,70 +130,11 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 	cfg.Timeout = time.Duration(t.Timeout*1000) * time.Millisecond
 
 	probeTicker := s.Clock.NewTicker(time.Duration(t.ProbeInterval*1000) * time.Millisecond)
-	commitTicker := s.Clock.NewTicker(time.Duration(t.CommitInterval*1000) * time.Millisecond)
-	defer probeTicker.Stop()
-	defer commitTicker.Stop()
+	// No aggregation loop here anymore.
 
 	// Concurrency limiter: ensure no more than 5 probes overlap for this target
 	sem := make(chan struct{}, 5)
-
-	// Results channel from probes
-	resultsChan := make(chan float64, 100)
-
 	var wg sync.WaitGroup
-
-	// Aggregator state
-	var (
-		count        int64
-		timeoutCount int64
-		td, _        = tdigest.New(tdigest.Compression(100))
-	)
-
-	// Start Aggregation Loop
-	go func() {
-		for {
-			select {
-			case val, ok := <-resultsChan:
-				if !ok {
-					return
-				}
-				if val == -1.0 {
-					timeoutCount++
-					continue
-				}
-				count++
-				td.Add(val)
-
-			case <-commitTicker.Chan():
-				if count == 0 && timeoutCount == 0 {
-					continue
-				}
-
-				tdData, err := db.SerializeTDigest(td)
-				if err != nil {
-					log.Printf("Failed to serialize tdigest for %s: %v", t.Name, err)
-					continue
-				}
-
-				dbRes := &db.Result{
-					Time:         s.Clock.Now().UTC(),
-					TargetID:     t.ID,
-					TimeoutCount: timeoutCount,
-					TDigestData:  tdData,
-				}
-
-				if err := s.db.AddResult(dbRes); err != nil {
-					log.Printf("Failed to save result for %s: %v", t.Name, err)
-				} else {
-					log.Printf("Saved result for %s (count=%d, timeouts=%d)", t.Name, count, timeoutCount)
-				}
-
-				count = 0
-				timeoutCount = 0
-				td, _ = tdigest.New(tdigest.Compression(100))
-			}
-		}
-	}()
 
 	runProbe := func() {
 		select {
@@ -160,22 +144,26 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 			go func() {
 				defer wg.Done()
 				defer func() { <-sem }() // Release
+
+				startTime := s.Clock.Now().UTC()
 				res, err := s.probeRunner.Run(cfg)
+
+				raw := db.RawResult{
+					Time:     startTime,
+					TargetID: t.ID,
+					Latency:  res,
+				}
+
 				if err != nil {
 					if strings.Contains(err.Error(), "probe timed out") {
-						// We treat timeout as a result passed to aggregation loop (as 0 or special signal?)
-						// Actually, better to send a special value or separate channel?
-						// Let's use -1.0 to signal timeout in resultsChan to keep it simple for now,
-						// or just handle it here?
-						// Since aggregation loop is separate, we need to send it there.
-						// Let's send -1.0.
-						resultsChan <- -1.0
+						raw.Latency = -1.0
+						s.rawResultChan <- raw
 						return
 					}
 					log.Printf("Probe failed for %s: %v", t.Name, err)
 					return
 				}
-				resultsChan <- res
+				s.rawResultChan <- raw
 			}()
 		default:
 			log.Printf("Skipping probe for %s due to overlapping limit", t.Name)
@@ -186,7 +174,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 		select {
 		case <-stopCh:
 			wg.Wait()
-			close(resultsChan)
 			return
 		case <-probeTicker.Chan():
 			runProbe()

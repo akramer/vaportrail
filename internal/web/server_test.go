@@ -10,6 +10,8 @@ import (
 
 	"vaportrail/internal/config"
 	"vaportrail/internal/db"
+
+	"github.com/caio/go-tdigest/v4"
 )
 
 func setupTestServer(t *testing.T) (*Server, *db.DB) {
@@ -41,22 +43,44 @@ func TestHandleGetResults(t *testing.T) {
 		t.Fatalf("Failed to add target: %v", err)
 	}
 
-	// Add some results
-	now := time.Now()
+	// Add some aggregated results
+	now := time.Now().UTC().Truncate(time.Second)
 
-	r1 := &db.Result{
-		Time:     now.Add(-2 * time.Hour),
-		TargetID: id,
+	// Create dummy tdigest
+	td, _ := tdigest.New(tdigest.Compression(100))
+	td.Add(100)
+	tdBytes, _ := db.SerializeTDigest(td)
+
+	r1 := &db.AggregatedResult{
+		Time:          now.Add(-50 * time.Minute),
+		TargetID:      id,
+		WindowSeconds: 60,
+		TDigestData:   tdBytes,
+		TimeoutCount:  0,
 	}
-	r2 := &db.Result{
-		Time:     now.Add(-30 * time.Minute),
-		TargetID: id,
+	r2 := &db.AggregatedResult{
+		Time:          now.Add(-30 * time.Minute),
+		TargetID:      id,
+		WindowSeconds: 60,
+		TDigestData:   tdBytes,
+		TimeoutCount:  0,
 	}
-	if err := database.AddResult(r1); err != nil {
+	if err := database.AddAggregatedResult(r1); err != nil {
 		t.Fatalf("Failed to add result 1: %v", err)
 	}
-	if err := database.AddResult(r2); err != nil {
+	if err := database.AddAggregatedResult(r2); err != nil {
 		t.Fatalf("Failed to add result 2: %v", err)
+	}
+
+	// Add some raw results for fallback/raw testing
+	// Raw results added but should NOT be used.
+	raw1 := &db.RawResult{
+		Time:     now.Add(-40 * time.Minute),
+		TargetID: id,
+		Latency:  50,
+	}
+	if err := database.AddRawResults([]db.RawResult{*raw1}); err != nil {
+		t.Fatalf("Failed to add raw result: %v", err)
 	}
 
 	// Test 1: No params (default limit 100, should see both if within limit, sorted DESC)
@@ -77,9 +101,9 @@ func TestHandleGetResults(t *testing.T) {
 	}
 
 	// Test 2: Time range filtering (Select only r2)
-	// r1 is -2h, r2 is -30m.
-	// Query: -1h to now. Should skip r1.
-	start := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	// r1 is -50m, r2 is -30m.
+	// Query: -40m to now. Should skip r1.
+	start := now.Add(-40 * time.Minute).Format(time.RFC3339)
 	end := now.Format(time.RFC3339)
 	req = httptest.NewRequest("GET", "/api/results/1?start="+start+"&end="+end, nil)
 	rr = httptest.NewRecorder()

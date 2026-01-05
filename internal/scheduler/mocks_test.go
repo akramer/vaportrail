@@ -9,8 +9,11 @@ import (
 
 // MockStore implements db.Store for testing
 type MockStore struct {
-	Targets        map[int64]db.Target
-	Results        map[int64][]db.Result
+	Targets           map[int64]db.Target
+	Results           map[int64][]db.Result // Legacy
+	RawResults        map[int64][]db.RawResult
+	AggregatedResults map[int64][]db.AggregatedResult
+
 	AddTargetFn    func(t *db.Target) (int64, error)
 	GetTargetsFn   func() ([]db.Target, error)
 	AddResultFn    func(r *db.Result) error
@@ -20,8 +23,10 @@ type MockStore struct {
 
 func NewMockStore() *MockStore {
 	return &MockStore{
-		Targets: make(map[int64]db.Target),
-		Results: make(map[int64][]db.Result),
+		Targets:           make(map[int64]db.Target),
+		Results:           make(map[int64][]db.Result),
+		RawResults:        make(map[int64][]db.RawResult),
+		AggregatedResults: make(map[int64][]db.AggregatedResult),
 	}
 }
 
@@ -100,6 +105,89 @@ func (m *MockStore) Close() error {
 		return m.CloseFn()
 	}
 	return nil
+}
+
+func (m *MockStore) AddRawResults(results []db.RawResult) error {
+	for _, r := range results {
+		m.RawResults[r.TargetID] = append(m.RawResults[r.TargetID], r)
+	}
+	return nil
+}
+
+func (m *MockStore) AddAggregatedResult(r *db.AggregatedResult) error {
+	m.AggregatedResults[r.TargetID] = append(m.AggregatedResults[r.TargetID], *r)
+	return nil
+}
+
+func (m *MockStore) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error) {
+	var maxTime time.Time
+	for _, r := range m.AggregatedResults[targetID] {
+		if r.WindowSeconds == windowSeconds {
+			if r.Time.After(maxTime) {
+				maxTime = r.Time
+			}
+		}
+	}
+	return maxTime, nil
+}
+
+func (m *MockStore) GetRawResults(targetID int64, start, end time.Time) ([]db.RawResult, error) {
+	var res []db.RawResult
+	for _, r := range m.RawResults[targetID] {
+		if (r.Time.After(start) || r.Time.Equal(start)) && r.Time.Before(end) {
+			res = append(res, r)
+		}
+	}
+	return res, nil
+}
+
+func (m *MockStore) GetAggregatedResults(targetID int64, windowSeconds int, start, end time.Time) ([]db.AggregatedResult, error) {
+	var res []db.AggregatedResult
+	for _, r := range m.AggregatedResults[targetID] {
+		if r.WindowSeconds == windowSeconds && (r.Time.After(start) || r.Time.Equal(start)) && r.Time.Before(end) {
+			res = append(res, r)
+		}
+	}
+	return res, nil
+}
+
+func (m *MockStore) DeleteRawResultsBefore(targetID int64, cutoff time.Time) error {
+	var keep []db.RawResult
+	for _, r := range m.RawResults[targetID] {
+		// Keep if time is >= cutoff (not strictly before)
+		if !r.Time.Before(cutoff) {
+			keep = append(keep, r)
+		}
+	}
+	m.RawResults[targetID] = keep
+	return nil
+}
+
+func (m *MockStore) DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error {
+	var keep []db.AggregatedResult
+	for _, r := range m.AggregatedResults[targetID] {
+		// Only filter if matching windowSeconds
+		if r.WindowSeconds == windowSeconds {
+			if !r.Time.Before(cutoff) {
+				keep = append(keep, r)
+			}
+		} else {
+			// Keep other windows
+			keep = append(keep, r)
+		}
+	}
+	m.AggregatedResults[targetID] = keep
+	return nil
+}
+
+func (m *MockStore) GetEarliestRawResultTime(targetID int64) (time.Time, error) {
+	var minTime time.Time
+	for _, r := range m.RawResults[targetID] {
+		if minTime.IsZero() || r.Time.Before(minTime) {
+			minTime = r.Time
+		}
+	}
+	return minTime, nil
 }
 
 // MockRunner implements probe.Runner for testing

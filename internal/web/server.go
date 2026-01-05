@@ -11,6 +11,7 @@ import (
 	"vaportrail/internal/config"
 	"vaportrail/internal/db"
 
+	"sort"
 	"vaportrail/internal/probe"
 	"vaportrail/internal/scheduler"
 
@@ -70,6 +71,20 @@ func (s *Server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Basic validation
+
+	if t.RetentionPolicies != "" {
+		var policies []scheduler.RetentionPolicy
+		// First unmarshal to check JSON validity
+		if err := json.Unmarshal([]byte(t.RetentionPolicies), &policies); err != nil {
+			http.Error(w, "Invalid retention policies JSON", http.StatusBadRequest)
+			return
+		}
+		// Then validate policies logic
+		if err := scheduler.ValidateRetentionPolicies(policies); err != nil {
+			http.Error(w, "Invalid retention policies: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	if t.Name == "" || t.Address == "" || t.ProbeType == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
@@ -145,6 +160,18 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t.ID = id
+
+	if t.RetentionPolicies != "" {
+		var policies []scheduler.RetentionPolicy
+		if err := json.Unmarshal([]byte(t.RetentionPolicies), &policies); err != nil {
+			http.Error(w, "Invalid retention policies JSON", http.StatusBadRequest)
+			return
+		}
+		if err := scheduler.ValidateRetentionPolicies(policies); err != nil {
+			http.Error(w, "Invalid retention policies: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	if t.Name == "" || t.Address == "" || t.ProbeType == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
@@ -229,39 +256,87 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var dbResults []db.Result
 	startStr := r.URL.Query().Get("start")
 	endStr := r.URL.Query().Get("end")
 
+	var start, end time.Time
+	var window int
+	// Fetch target to get retention policies
+	target, err := s.db.GetTarget(id)
+	if err != nil {
+		// If target not found, we can't really determine policies.
+		// Return 404 or just fail? The ID validation passed int parsing but DB check might fail.
+		http.Error(w, "Target not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
 	if startStr != "" && endStr != "" {
-		start, err := time.Parse(time.RFC3339, startStr)
+		start, err = time.Parse(time.RFC3339, startStr)
 		if err != nil {
 			http.Error(w, "Invalid start time", http.StatusBadRequest)
 			return
 		}
-		end, err := time.Parse(time.RFC3339, endStr)
+		end, err = time.Parse(time.RFC3339, endStr)
 		if err != nil {
 			http.Error(w, "Invalid end time", http.StatusBadRequest)
 			return
 		}
-		dbResults, err = s.db.GetResultsByTime(id, start, end)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 	} else {
-		// Default to last 100 results for simple views
-		dbResults, err = s.db.GetResults(id, 100)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		// Default view (last hour)
+		end = time.Now().UTC()
+		start = end.Add(-1 * time.Hour)
+	}
+
+	// Dynamic Window Selection
+	// Goal: < 1000 datapoints
+	durationSeconds := end.Sub(start).Seconds()
+	desiredWindow := max(int(durationSeconds/1000.0), 1)
+
+	policies := scheduler.GetRetentionPolicies(*target)
+
+	// Collect available windows from policies (and 0 for raw if 0 exists)
+	// Actually policies usually define what we HAVE.
+	// We want to pick the smallest window >= desiredWindow
+	// availableWindows should include those defined in policies.
+
+	var availableWindows []int
+	for _, p := range policies {
+		if p.Window > 0 {
+			availableWindows = append(availableWindows, p.Window)
+		}
+	}
+	sort.Ints(availableWindows)
+
+	// Pick best window
+	window = -1
+	for _, w := range availableWindows {
+		if w >= desiredWindow {
+			window = w
+			break
 		}
 	}
 
-	// Initialize as empty slice so it marshals to [] instead of null
-	apiResults := []APIResult{}
+	// If no window found (all smaller than desired? Or desired is huge?)
+	// If window is still -1, it means desiredWindow > all available windows.
+	// Pick the largest one.
+	if window == -1 && len(availableWindows) > 0 {
+		window = availableWindows[len(availableWindows)-1]
+	}
 
-	for _, res := range dbResults {
+	// If we still don't have a window (e.g. policies empty?), default to 60
+	if window == -1 {
+		window = 60
+	}
+
+	var apiResults []APIResult
+
+	results, err := s.db.GetAggregatedResults(id, window, start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for _, res := range results {
 		apiRes := APIResult{
 			Time:         res.Time,
 			TargetID:     res.TargetID,

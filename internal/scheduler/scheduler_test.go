@@ -19,6 +19,7 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	fakeClock := clockwork.NewFakeClock()
 	s := New(mockDB)
 	s.Clock = fakeClock
+	s.Start()
 
 	// Setup Mock Runner
 	mockRunner := &MockRunner{
@@ -44,17 +45,20 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 
 	// Step-wise advance to ensure goroutines get scheduled
 
-	// Advance 1.2s total, in 100ms increments
-	for i := 0; i < 15; i++ {
+	// Advance 2.5s total, in 100ms increments (Batch writer flushes every 2s)
+	for i := 0; i < 25; i++ {
 		fakeClock.Advance(100 * time.Millisecond)
 		time.Sleep(20 * time.Millisecond) // Yield to runtime
 	}
 
 	// We expect the mockDB to have received a Result
 	// Poll for result
-	var results []db.Result
+	// We expect the mockDB to have received RawResults
+	// Poll for results
+	var results []db.RawResult
 	for i := 0; i < 5; i++ {
-		results, _ = mockDB.GetResults(id, 100)
+		// Use a wide time range to catch everything
+		results, _ = mockDB.GetRawResults(id, time.Time{}, time.Now().Add(24*time.Hour))
 		if len(results) > 0 {
 			break
 		}
@@ -62,27 +66,13 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	}
 
 	if len(results) == 0 {
-		t.Fatal("Expected results to be committed, but found none")
+		t.Fatal("Expected raw results to be committed, but found none")
 	}
 
-	// Verify the data
 	// Verify the data
 	r := results[0]
-
-	td, err := db.DeserializeTDigest(r.TDigestData)
-	if err != nil {
-		t.Fatalf("Failed to deserialize tdigest: %v", err)
-	}
-
-	if td.Count() == 0 {
-		t.Errorf("Expected TDigest Count > 0, got %d", td.Count())
-	}
-
-	minVal := td.Quantile(0)
-	maxVal := td.Quantile(1)
-
-	if minVal != 500.0 || maxVal != 500.0 {
-		t.Errorf("Expected Min/Max 500, got Min=%v Max=%v", minVal, maxVal)
+	if r.Latency != 500.0 {
+		t.Errorf("Expected Latency 500.0, got %v", r.Latency)
 	}
 
 	s.RemoveTarget(id)
@@ -93,6 +83,7 @@ func TestTargetRemovalRace_WithMocks(t *testing.T) {
 	fakeClock := clockwork.NewFakeClock()
 	s := New(mockDB)
 	s.Clock = fakeClock
+	s.Start()
 
 	// Mock that takes a bit of time
 	s.probeRunner = &MockRunner{
@@ -137,6 +128,7 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	fakeClock := clockwork.NewFakeClock()
 	s := New(mockDB)
 	s.Clock = fakeClock
+	s.Start()
 
 	// Setup Mock Runner to simulate timeout
 	// In probe.go we return: fmt.Errorf("probe timed out after %v", cfg.Timeout)
@@ -164,16 +156,16 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	s.AddTarget(target)
 
 	// Advance clock to trigger probes
-	// 1s commit interval, 0.1s probe interval -> ~10 probes
-	for i := 0; i < 15; i++ {
+	// Advance > 2s for batch flush
+	for i := 0; i < 25; i++ {
 		fakeClock.Advance(100 * time.Millisecond)
 		time.Sleep(20 * time.Millisecond)
 	}
 
 	// Verify results
-	var results []db.Result
+	var results []db.RawResult
 	for i := 0; i < 5; i++ {
-		results, _ = mockDB.GetResults(id, 100)
+		results, _ = mockDB.GetRawResults(id, time.Time{}, time.Now().Add(24*time.Hour))
 		if len(results) > 0 {
 			break
 		}
@@ -181,24 +173,13 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	}
 
 	if len(results) == 0 {
-		t.Fatal("Expected results, got none")
+		t.Fatal("Expected raw results, got none")
 	}
 
 	r := results[0]
-	// All probes should have failed with timeout
-	// ProbeCount should be 0 because we only count successes in the aggregator for stats
-	// But actually, wait. In scheduler.go:
-	/*
-		if val == -1.0 {
-			timeoutCount++
-			continue
-		}
-		count++
-	*/
-	// So ProbeCount (which comes from count) will be 0. TimeoutCount should be > 0.
-
-	if r.TimeoutCount == 0 {
-		t.Errorf("Expected TimeoutCount > 0, got %d", r.TimeoutCount)
+	// All probes should have failed with timeout -> Latency -1
+	if r.Latency != -1.0 {
+		t.Errorf("Expected Latency -1.0 (timeout), got %f", r.Latency)
 	}
 
 	s.RemoveTarget(id)
