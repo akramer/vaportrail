@@ -138,6 +138,82 @@ func TestHandleGetResults(t *testing.T) {
 	}
 }
 
+func TestHandleGetResults_Raw(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+
+	// Add a target
+	target := &db.Target{Name: "Test Target", Address: "example.com", ProbeType: "http"}
+	id, err := database.AddTarget(target)
+	if err != nil {
+		t.Fatalf("Failed to add target: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	// Add 900 raw results (below 1000 limit)
+	var batch []db.RawResult
+	for i := 0; i < 900; i++ {
+		batch = append(batch, db.RawResult{
+			Time:     now.Add(time.Duration(-i) * time.Minute),
+			TargetID: id,
+			Latency:  float64(i * 100),
+		})
+	}
+	if err := database.AddRawResults(batch); err != nil {
+		t.Fatalf("Failed to add raw results: %v", err)
+	}
+
+	// Test 1: Fetch raw results (should succeed)
+	start := now.Add(-1000 * time.Minute).Format(time.RFC3339)
+	end := now.Add(time.Minute).Format(time.RFC3339)
+
+	req := httptest.NewRequest("GET", "/api/results/"+strconv.Itoa(int(id))+"?start="+start+"&end="+end+"&raw=true", nil)
+	rr := httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %v body: %s", rr.Code, rr.Body.String())
+	}
+
+	var results []APIResult
+	if err := json.NewDecoder(rr.Body).Decode(&results); err != nil {
+		t.Errorf("Failed to decode response: %v", err)
+	}
+	if len(results) != 900 {
+		t.Errorf("Expected 900 results, got %d", len(results))
+	}
+	// Check one result
+	if results[0].ProbeCount != 1 {
+		t.Errorf("Expected ProbCount 1 for raw result, got %d", results[0].ProbeCount)
+	}
+
+	// Test 2: Add more results to exceed 1000
+	var batch2 []db.RawResult
+	for i := 0; i < 200; i++ {
+		batch2 = append(batch2, db.RawResult{
+			Time:     now.Add(time.Duration(-1000-i) * time.Minute),
+			TargetID: id,
+			Latency:  1.0,
+		})
+	}
+	if err := database.AddRawResults(batch2); err != nil {
+		t.Fatalf("Failed to add raw results batch 2: %v", err)
+	}
+
+	// Now total 1100. Range covers all.
+	startWide := now.Add(-2000 * time.Minute).Format(time.RFC3339)
+	req = httptest.NewRequest("GET", "/api/results/"+strconv.Itoa(int(id))+"?start="+startWide+"&end="+end+"&raw=true", nil)
+	rr = httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for >1000 results, got %v", rr.Code)
+	}
+	if rr.Body.String() != "Too many raw results (limit 1000). Please shorten the time range.\n" {
+		t.Errorf("Unexpected error message: %q", rr.Body.String())
+	}
+}
+
 func TestHandleGraph(t *testing.T) {
 	s, database := setupTestServer(t)
 	defer database.Close()

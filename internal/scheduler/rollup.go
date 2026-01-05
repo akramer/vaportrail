@@ -209,7 +209,7 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 
 	if sourceWindow == 0 {
 		// Aggregate from Raw
-		raws, err := rm.db.GetRawResults(t.ID, start, end)
+		raws, err := rm.db.GetRawResults(t.ID, start, end, -1)
 		if err != nil {
 			log.Printf("RollupManager: Error fetching raw results: %v", err)
 			return

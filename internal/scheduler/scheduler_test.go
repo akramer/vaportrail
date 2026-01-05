@@ -58,7 +58,7 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	var results []db.RawResult
 	for i := 0; i < 5; i++ {
 		// Use a wide time range to catch everything
-		results, _ = mockDB.GetRawResults(id, time.Time{}, time.Now().Add(24*time.Hour))
+		results, _ = mockDB.GetRawResults(id, time.Time{}, time.Now().Add(24*time.Hour), 1000)
 		if len(results) > 0 {
 			break
 		}
@@ -165,7 +165,7 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	// Verify results
 	var results []db.RawResult
 	for i := 0; i < 5; i++ {
-		results, _ = mockDB.GetRawResults(id, time.Time{}, time.Now().Add(24*time.Hour))
+		results, _ = mockDB.GetRawResults(id, time.Time{}, time.Now().Add(24*time.Hour), 1000)
 		if len(results) > 0 {
 			break
 		}

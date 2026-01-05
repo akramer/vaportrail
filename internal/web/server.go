@@ -224,21 +224,22 @@ func (s *Server) handleGetTargets(w http.ResponseWriter, r *http.Request) {
 }
 
 type APIResult struct {
-	Time         time.Time
-	TargetID     int64
-	MinNS        int64
-	MaxNS        int64
-	AvgNS        int64
-	P0           float64
-	P1           float64
-	P25          float64
-	P50          float64
-	P75          float64
-	P99          float64
-	P100         float64
-	Percentiles  []float64 // 0th, 5th, 10th... 100th
-	TimeoutCount int64
-	ProbeCount   int64
+	Time          time.Time
+	TargetID      int64
+	MinNS         int64
+	MaxNS         int64
+	AvgNS         int64
+	P0            float64
+	P1            float64
+	P25           float64
+	P50           float64
+	P75           float64
+	P99           float64
+	P100          float64
+	Percentiles   []float64 // 0th, 5th, 10th... 100th
+	TimeoutCount  int64
+	ProbeCount    int64
+	WindowSeconds int
 }
 
 func sanitizeFloat(f float64) float64 {
@@ -330,6 +331,35 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	var apiResults []APIResult
 
+	if r.URL.Query().Get("raw") == "true" {
+		// User: "render the first 1000"
+		// Just pull 1000. DB query is ordered by time ASC, so this gives first 1000.
+		rawResults, err := s.db.GetRawResults(id, start, end, 1000)
+		if err != nil {
+			http.Error(w, "Failed to get raw results: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// No longer erroring on > 1000, just returning what we got (capped at 1000 by query limit)
+
+		for _, rr := range rawResults {
+			apiRes := APIResult{
+				Time:       rr.Time,
+				TargetID:   rr.TargetID,
+				ProbeCount: 1,
+				MinNS:      int64(rr.Latency),
+				MaxNS:      int64(rr.Latency),
+				AvgNS:      int64(rr.Latency), // Set Avg to latency for simple display usually
+				P0:         rr.Latency,
+				P100:       rr.Latency,
+				P50:        rr.Latency, // Median is the value itself
+			}
+			apiResults = append(apiResults, apiRes)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiResults)
+		return
+	}
+
 	results, err := s.db.GetAggregatedResults(id, window, start, end)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -338,10 +368,11 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	for _, res := range results {
 		apiRes := APIResult{
-			Time:         res.Time,
-			TargetID:     res.TargetID,
-			TimeoutCount: res.TimeoutCount,
-			ProbeCount:   0, // Will be populated from TDigest if available
+			Time:          res.Time,
+			TargetID:      res.TargetID,
+			TimeoutCount:  res.TimeoutCount,
+			ProbeCount:    0, // Will be populated from TDigest if available
+			WindowSeconds: res.WindowSeconds,
 		}
 
 		if len(res.TDigestData) > 0 {

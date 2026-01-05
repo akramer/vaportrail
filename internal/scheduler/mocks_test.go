@@ -131,12 +131,17 @@ func (m *MockStore) GetLastRollupTime(targetID int64, windowSeconds int) (time.T
 	return maxTime, nil
 }
 
-func (m *MockStore) GetRawResults(targetID int64, start, end time.Time) ([]db.RawResult, error) {
+func (m *MockStore) GetRawResults(targetID int64, start, end time.Time, limit int) ([]db.RawResult, error) {
 	var res []db.RawResult
 	for _, r := range m.RawResults[targetID] {
 		if (r.Time.After(start) || r.Time.Equal(start)) && r.Time.Before(end) {
 			res = append(res, r)
 		}
+	}
+	// Sort by time just in case, though usually appended in order? Mock store might not guarantee order.
+	// But let's just apply limit.
+	if limit > 0 && len(res) > limit {
+		res = res[:limit]
 	}
 	return res, nil
 }

@@ -32,7 +32,7 @@ type Store interface {
 	AddRawResults(results []RawResult) error
 	AddAggregatedResult(r *AggregatedResult) error
 	GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error)
-	GetRawResults(targetID int64, start, end time.Time) ([]RawResult, error)
+	GetRawResults(targetID int64, start, end time.Time, limit int) ([]RawResult, error)
 	GetAggregatedResults(targetID int64, windowSeconds int, start, end time.Time) ([]AggregatedResult, error)
 	DeleteRawResultsBefore(targetID int64, cutoff time.Time) error
 	DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error
@@ -280,9 +280,9 @@ func (d *DB) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, er
 	return time.Time{}, nil
 }
 
-func (d *DB) GetRawResults(targetID int64, start, end time.Time) ([]RawResult, error) {
+func (d *DB) GetRawResults(targetID int64, start, end time.Time, limit int) ([]RawResult, error) {
 	rows, err := d.Query(`SELECT time, target_id, latency FROM raw_results 
-		WHERE target_id = ? AND time >= ? AND time < ? ORDER BY time ASC`, targetID, start, end)
+		WHERE target_id = ? AND time >= ? AND time < ? ORDER BY time ASC LIMIT ?`, targetID, start, end, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -56,7 +56,7 @@ func TestRetentionManager(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// 3. Verify Raw Results
-	raws, _ := mockDB.GetRawResults(id, baseTime.Add(-100*time.Second), baseTime.Add(1*time.Hour))
+	raws, _ := mockDB.GetRawResults(id, baseTime.Add(-100*time.Second), baseTime.Add(1*time.Hour), -1)
 	if len(raws) != 1 {
 		t.Fatalf("Expected 1 raw result kept, got %d", len(raws))
 	}
