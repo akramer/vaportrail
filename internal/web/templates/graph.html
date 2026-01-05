@@ -179,15 +179,45 @@
 
                         const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
 
+                        // Collect stops with their brightness
+                        let stops = [];
                         for (let i = 0; i <= 20; i++) {
                             const val = pValues[i];
                             const y = scales.y.getPixelForValue(val);
                             let stop = (y - topY) / (bottomY - topY);
+                            // Normalize stop: 0 at top (P99), 1 at bottom (P1)
                             stop = Math.max(0, Math.min(1, stop));
+
                             const dist = Math.abs(i - 10);
                             const brightness = Math.floor((dist / 10) * 200);
-                            gradient.addColorStop(stop, `rgba(${brightness}, ${brightness}, ${brightness}, 1)`);
+                            stops.push({ stop, brightness });
                         }
+
+                        // Sort stops by offset ascending
+                        stops.sort((a, b) => a.stop - b.stop);
+
+                        // Deduplicate stops at same position, keeping the darkest (min brightness)
+                        let uniqueStops = [];
+                        if (stops.length > 0) {
+                            let current = stops[0];
+                            for (let i = 1; i < stops.length; i++) {
+                                const next = stops[i];
+                                if (Math.abs(next.stop - current.stop) < 1e-5) {
+                                    // Merge: keep darker
+                                    if (next.brightness < current.brightness) {
+                                        current.brightness = next.brightness;
+                                    }
+                                } else {
+                                    uniqueStops.push(current);
+                                    current = next;
+                                }
+                            }
+                            uniqueStops.push(current);
+                        }
+
+                        uniqueStops.forEach(s => {
+                            gradient.addColorStop(s.stop, `rgba(${s.brightness}, ${s.brightness}, ${s.brightness}, 1)`);
+                        });
                         return gradient;
                     }
                     return 'black';
