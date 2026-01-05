@@ -1,202 +1,175 @@
-<!DOCTYPE html>
-<html>
+{{template "header" .}}
 
-<head>
-    <title>VaporTrail</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <style>
-        body {
-            font-family: sans-serif;
-            padding: 20px;
+<div style="display: flex; justify-content: space-between; align-items: center;">
+    <h1>Dashboard</h1>
+</div>
+<div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+    <button onclick="showAddTarget()">Add Target</button>
+
+    <span>Graph Mode: </span>
+    <select id="graph-mode" onchange="changeGraphMode(this.value)">
+        <option value="heatmap">Heatmap</option>
+        <option value="line">Line Chart</option>
+    </select>
+
+    <span style="margin-left: 20px;">Start:</span>
+    <input type="datetime-local" id="start-time">
+
+    <span>End:</span>
+    <input type="datetime-local" id="end-time">
+
+    <button onclick="updateTimeRange()">Update</button>
+    <button onclick="resetTimeRange()">Reset (Last 1h)</button>
+</div>
+<div id="targets">Loading...</div>
+
+<div id="add-target-modal"
+    style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:20px; border:1px solid black; z-index:1000;">
+    <h2 id="modal-title">Add Target</h2>
+    <form id="target-form" onsubmit="submitTarget(event)">
+        <input type="hidden" name="id" id="target-id">
+        <div>
+            <label>Name:</label><br>
+            <input type="text" name="name" id="name" required>
+        </div>
+        <div>
+            <label>Address:</label><br>
+            <input type="text" name="address" id="address" required>
+        </div>
+        <div>
+            <label>Probe Type:</label><br>
+            <select name="type" id="probe-type">
+                <option value="ping">Ping</option>
+                <option value="dig">Dig</option>
+                <option value="http">HTTP</option>
+                <option value="dns">DNS</option>
+            </select>
+        </div>
+        <div>
+            <label>Probe Interval (s):</label><br>
+            <input type="number" name="interval" id="probe-interval" value="1.0" min="0.1" step="0.1">
+        </div>
+        <div class="form-group">
+            <label for="commit-interval">Commit Interval (s):</label>
+            <input type="number" id="commit-interval" name="commit_interval" step="1.0" value="60.0">
+        </div>
+        <div class="form-group">
+            <label for="timeout">Timeout (s):</label>
+            <input type="number" id="timeout" name="timeout" step="any" value="5.0">
+        </div>
+        <button type="submit">Save</button>
+        <button type="button" onclick="document.getElementById('add-target-modal').style.display='none'">Cancel</button>
+    </form>
+</div>
+
+<script>
+    let currentTargets = []; // Store targets globally for easy access
+    let currentGraphMode = 'heatmap';
+
+    // Initialize time inputs
+    function initTimeInputs() {
+        const end = new Date();
+        const start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
+        setTimeInputs(start, end);
+    }
+
+    function setTimeInputs(start, end) {
+        // datetime-local expects YYYY-MM-DDTHH:mm
+        const toLocalISO = (d) => {
+            const offset = d.getTimezoneOffset() * 60000;
+            return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+        };
+        document.getElementById('start-time').value = toLocalISO(start);
+        document.getElementById('end-time').value = toLocalISO(end);
+    }
+
+    function getTimeRange() {
+        const startVal = document.getElementById('start-time').value;
+        const endVal = document.getElementById('end-time').value;
+
+        if (startVal && endVal) {
+            return { start: new Date(startVal), end: new Date(endVal) };
         }
+        return null;
+    }
 
-        .target {
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin-bottom: 20px;
+    function updateTimeRange() {
+        // Reload all charts with new time range
+        for (const t of currentTargets) {
+            loadChart(t.ID, 'chart-' + t.ID);
         }
+    }
 
-        .chart-container {
-            position: relative;
-            height: 300px;
-            width: 100%;
-        }
-    </style>
-</head>
+    function resetTimeRange() {
+        initTimeInputs();
+        updateTimeRange();
+    }
 
-<body>
-    <h1>VaporTrail Dashboard</h1>
-    <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
-        <button onclick="showAddTarget()">Add Target</button>
+    // Initialize on load
+    window.addEventListener('load', initTimeInputs);
 
-        <span>Graph Mode: </span>
-        <select id="graph-mode" onchange="changeGraphMode(this.value)">
-            <option value="heatmap">Heatmap</option>
-            <option value="line">Line Chart</option>
-        </select>
-
-        <span style="margin-left: 20px;">Start:</span>
-        <input type="datetime-local" id="start-time">
-
-        <span>End:</span>
-        <input type="datetime-local" id="end-time">
-
-        <button onclick="updateTimeRange()">Update</button>
-        <button onclick="resetTimeRange()">Reset (Last 1h)</button>
-    </div>
-    <div id="targets">Loading...</div>
-
-    <div id="add-target-modal"
-        style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:20px; border:1px solid black; z-index:1000;">
-        <h2 id="modal-title">Add Target</h2>
-        <form id="target-form" onsubmit="submitTarget(event)">
-            <input type="hidden" name="id" id="target-id">
-            <div>
-                <label>Name:</label><br>
-                <input type="text" name="name" id="name" required>
-            </div>
-            <div>
-                <label>Address:</label><br>
-                <input type="text" name="address" id="address" required>
-            </div>
-            <div>
-                <label>Probe Type:</label><br>
-                <select name="type" id="probe-type">
-                    <option value="ping">Ping</option>
-                    <option value="dig">Dig</option>
-                    <option value="http">HTTP</option>
-                    <option value="dns">DNS</option>
-                </select>
-            </div>
-            <div>
-                <label>Probe Interval (s):</label><br>
-                <input type="number" name="interval" id="probe-interval" value="1.0" min="0.1" step="0.1">
-            </div>
-            <div class="form-group">
-                <label for="commit-interval">Commit Interval (s):</label>
-                <input type="number" id="commit-interval" name="commit_interval" step="1.0" value="60.0">
-            </div>
-            <div class="form-group">
-                <label for="timeout">Timeout (s):</label>
-                <input type="number" id="timeout" name="timeout" step="any" value="5.0">
-            </div>
-            <button type="submit">Save</button>
-            <button type="button"
-                onclick="document.getElementById('add-target-modal').style.display='none'">Cancel</button>
-        </form>
-    </div>
-
-    <script>
-        let currentTargets = []; // Store targets globally for easy access
-        let currentGraphMode = 'heatmap';
-
-        // Initialize time inputs
-        function initTimeInputs() {
-            const end = new Date();
-            const start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
-            setTimeInputs(start, end);
-        }
-
-        function setTimeInputs(start, end) {
-            // datetime-local expects YYYY-MM-DDTHH:mm
-            const toLocalISO = (d) => {
-                const offset = d.getTimezoneOffset() * 60000;
-                return new Date(d.getTime() - offset).toISOString().slice(0, 16);
-            };
-            document.getElementById('start-time').value = toLocalISO(start);
-            document.getElementById('end-time').value = toLocalISO(end);
-        }
-
-        function getTimeRange() {
-            const startVal = document.getElementById('start-time').value;
-            const endVal = document.getElementById('end-time').value;
-
-            if (startVal && endVal) {
-                return { start: new Date(startVal), end: new Date(endVal) };
+    function changeGraphMode(mode) {
+        currentGraphMode = mode;
+        // Reload all charts
+        for (const t of currentTargets) {
+            const chartInstance = Chart.getChart('chart-' + t.ID);
+            if (chartInstance) {
+                chartInstance.destroy();
             }
-            return null;
+            loadChart(t.ID, 'chart-' + t.ID);
+        }
+    }
+
+    async function submitTarget(e) {
+        e.preventDefault();
+        const id = document.getElementById('target-id').value;
+        const name = document.getElementById('name').value;
+        const address = document.getElementById('address').value;
+        const probeType = document.getElementById('probe-type').value;
+        const probeInterval = parseFloat(document.getElementById('probe-interval').value);
+        const commitInterval = parseFloat(document.getElementById('commit-interval').value);
+        const timeout = parseFloat(document.getElementById('timeout').value);
+
+        const payload = {
+            Name: name,
+            Address: address,
+            ProbeType: probeType,
+            ProbeInterval: probeInterval,
+            CommitInterval: commitInterval,
+            Timeout: timeout
+        };
+
+        let res;
+        if (id) {
+            res = await fetch('/api/targets/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            res = await fetch('/api/targets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
         }
 
-        function updateTimeRange() {
-            // Reload all charts with new time range
-            for (const t of currentTargets) {
-                loadChart(t.ID, 'chart-' + t.ID);
-            }
+        if (res.ok) {
+            document.getElementById('add-target-modal').style.display = 'none';
+            loadTargets();
+            e.target.reset();
+        } else {
+            alert("Failed to save target");
         }
+    }
 
-        function resetTimeRange() {
-            initTimeInputs();
-            updateTimeRange();
-        }
-
-        // Initialize on load
-        window.addEventListener('load', initTimeInputs);
-
-        function changeGraphMode(mode) {
-            currentGraphMode = mode;
-            // Reload all charts
-            for (const t of currentTargets) {
-                const chartInstance = Chart.getChart('chart-' + t.ID);
-                if (chartInstance) {
-                    chartInstance.destroy();
-                }
-                loadChart(t.ID, 'chart-' + t.ID);
-            }
-        }
-
-        async function submitTarget(e) {
-            e.preventDefault();
-            const id = document.getElementById('target-id').value;
-            const name = document.getElementById('name').value;
-            const address = document.getElementById('address').value;
-            const probeType = document.getElementById('probe-type').value;
-            const probeInterval = parseFloat(document.getElementById('probe-interval').value);
-            const commitInterval = parseFloat(document.getElementById('commit-interval').value);
-            const timeout = parseFloat(document.getElementById('timeout').value);
-
-            const payload = {
-                Name: name,
-                Address: address,
-                ProbeType: probeType,
-                ProbeInterval: probeInterval,
-                CommitInterval: commitInterval,
-                Timeout: timeout
-            };
-
-            let res;
-            if (id) {
-                res = await fetch('/api/targets/' + id, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            } else {
-                res = await fetch('/api/targets', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            }
-
-            if (res.ok) {
-                document.getElementById('add-target-modal').style.display = 'none';
-                loadTargets();
-                e.target.reset();
-            } else {
-                alert("Failed to save target");
-            }
-        }
-
-        async function loadTargets() {
-            const res = await fetch('/api/targets');
-            const targets = await res.json();
-            if (!targets) targets = [];
-            currentTargets = targets; // Update global targets array
-            const targetsDiv = document.getElementById('targets');
-            targetsDiv.innerHTML = targets.map(t => `
+    async function loadTargets() {
+        const res = await fetch('/api/targets');
+        const targets = await res.json();
+        if (!targets) targets = [];
+        currentTargets = targets; // Update global targets array
+        const targetsDiv = document.getElementById('targets');
+        targetsDiv.innerHTML = targets.map(t => `
                 <div class="target-card">
                     <h3>${t.Name} (${t.ProbeType})</h3>
                     <p>Address: ${t.Address}</p>
@@ -210,403 +183,402 @@
                 </div>
             `).join('');
 
-            for (const t of targets) {
-                loadChart(t.ID, 'chart-' + t.ID);
-            }
+        for (const t of targets) {
+            loadChart(t.ID, 'chart-' + t.ID);
+        }
+    }
+
+    function editTarget(id) {
+        const t = currentTargets.find(t => t.ID === id);
+        if (!t) return;
+
+        document.getElementById('modal-title').innerText = 'Edit Target';
+        document.getElementById('target-id').value = t.ID;
+        document.getElementById('name').value = t.Name;
+        document.getElementById('address').value = t.Address;
+        document.getElementById('probe-type').value = t.ProbeType;
+        document.getElementById('probe-interval').value = t.ProbeInterval;
+        document.getElementById('commit-interval').value = t.CommitInterval;
+        document.getElementById('timeout').value = t.Timeout || 5.0;
+
+        document.getElementById('add-target-modal').style.display = 'block';
+    }
+
+    function showAddTarget() {
+        document.getElementById('modal-title').innerText = 'Add Target';
+        document.getElementById('target-id').value = '';
+        document.getElementById('target-form').reset();
+        document.getElementById('commit-interval').value = 60.0;
+        document.getElementById('timeout').value = 5.0;
+        document.getElementById('add-target-modal').style.display = 'block';
+    }
+
+    async function deleteTarget(id) {
+        if (!confirm("Are you sure you want to delete this target?")) return;
+        const res = await fetch('/api/targets/' + id, { method: 'DELETE' });
+        if (res.ok) {
+            loadTargets();
+        } else {
+            alert("Failed to delete target");
+        }
+    }
+
+    async function loadChart(id, canvasId) {
+        let start, end;
+        const userRange = getTimeRange();
+
+        if (userRange) {
+            start = userRange.start;
+            end = userRange.end;
+        } else {
+            end = new Date();
+            start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
         }
 
-        function editTarget(id) {
-            const t = currentTargets.find(t => t.ID === id);
-            if (!t) return;
+        const url = '/api/results/' + id + '?start=' + start.toISOString() + '&end=' + end.toISOString();
+        const res = await fetch(url);
+        const data = await res.json();
 
-            document.getElementById('modal-title').innerText = 'Edit Target';
-            document.getElementById('target-id').value = t.ID;
-            document.getElementById('name').value = t.Name;
-            document.getElementById('address').value = t.Address;
-            document.getElementById('probe-type').value = t.ProbeType;
-            document.getElementById('probe-interval').value = t.ProbeInterval;
-            document.getElementById('commit-interval').value = t.CommitInterval;
-            document.getElementById('timeout').value = t.Timeout || 5.0;
+        if (!data) return;
 
-            document.getElementById('add-target-modal').style.display = 'block';
-        }
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return; // Canvas might be gone if target deleted
 
-        function showAddTarget() {
-            document.getElementById('modal-title').innerText = 'Add Target';
-            document.getElementById('target-id').value = '';
-            document.getElementById('target-form').reset();
-            document.getElementById('commit-interval').value = 60.0;
-            document.getElementById('timeout').value = 5.0;
-            document.getElementById('add-target-modal').style.display = 'block';
-        }
+        // Check for existing chart instance and destroy it (important for mode switching)
+        const existingChart = Chart.getChart(canvasId);
+        if (existingChart) existingChart.destroy();
 
-        async function deleteTarget(id) {
-            if (!confirm("Are you sure you want to delete this target?")) return;
-            const res = await fetch('/api/targets/' + id, { method: 'DELETE' });
-            if (res.ok) {
-                loadTargets();
-            } else {
-                alert("Failed to delete target");
-            }
-        }
+        const chartCtx = ctx.getContext('2d');
+        const labels = data.map(d => d.Time);
 
-        async function loadChart(id, canvasId) {
-            let start, end;
-            const userRange = getTimeRange();
+        if (currentGraphMode === 'heatmap') {
+            // --- HEATMAP MODE ---
+            // Data for floating bars: [Min, Max]
+            // We use P1/P99 if available to filter outliers.
+            const barData = data.map(d => {
+                if (d.ProbeCount === 0) return null;
+                // Use P1/P99 if available, else P0/P100 logic, else Min/Max
+                // P1 is d.P1, P99 is d.P99.
+                let minVal = d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS);
+                let maxVal = d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS);
 
-            if (userRange) {
-                start = userRange.start;
-                end = userRange.end;
-            } else {
-                end = new Date();
-                start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
-            }
+                return [minVal / 1000000, maxVal / 1000000];
+            });
 
-            const url = '/api/results/' + id + '?start=' + start.toISOString() + '&end=' + end.toISOString();
-            const res = await fetch(url);
-            const data = await res.json();
+            const dataset = {
+                label: 'Latency Range',
+                data: barData,
+                backgroundColor: function (context) {
+                    const chart = context.chart;
+                    const { ctx, chartArea, scales } = chart;
+                    if (!chartArea) return null;
 
-            if (!data) return;
+                    const index = context.dataIndex;
+                    const d = data[index];
+                    if (!d || d.ProbeCount === 0) return 'rgba(0,0,0,0)';
 
-            const ctx = document.getElementById(canvasId);
-            if (!ctx) return; // Canvas might be gone if target deleted
+                    // If we have detailed percentiles, use them for a rich gradient
+                    if (d.Percentiles && d.Percentiles.length === 21) {
+                        const pValues = d.Percentiles.map(v => v / 1000000);
 
-            // Check for existing chart instance and destroy it (important for mode switching)
-            const existingChart = Chart.getChart(canvasId);
-            if (existingChart) existingChart.destroy();
+                        // Bar boundaries (match barData logic)
+                        const p1Val = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : pValues[0]) / 1000000;
+                        const p99Val = (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : pValues[20]) / 1000000;
 
-            const chartCtx = ctx.getContext('2d');
-            const labels = data.map(d => d.Time);
+                        const topY = scales.y.getPixelForValue(p99Val);
+                        const bottomY = scales.y.getPixelForValue(p1Val);
 
-            if (currentGraphMode === 'heatmap') {
-                // --- HEATMAP MODE ---
-                // Data for floating bars: [Min, Max]
-                // We use P1/P99 if available to filter outliers.
-                const barData = data.map(d => {
-                    if (d.ProbeCount === 0) return null;
-                    // Use P1/P99 if available, else P0/P100 logic, else Min/Max
-                    // P1 is d.P1, P99 is d.P99.
-                    let minVal = d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS);
-                    let maxVal = d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS);
+                        // Check for zero height or invalid range
+                        if (Math.abs(topY - bottomY) < 0.1) return 'rgba(0,0,0,1)';
 
-                    return [minVal / 1000000, maxVal / 1000000];
-                });
+                        const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
 
-                const dataset = {
-                    label: 'Latency Range',
-                    data: barData,
-                    backgroundColor: function (context) {
-                        const chart = context.chart;
-                        const { ctx, chartArea, scales } = chart;
-                        if (!chartArea) return null;
+                        // Collect all stops first
+                        const potentialStops = [];
 
-                        const index = context.dataIndex;
-                        const d = data[index];
-                        if (!d || d.ProbeCount === 0) return 'rgba(0,0,0,0)';
+                        // 21 points: 0, 5, 10 ... 100.
+                        // Index 10 is Median (P50).
+                        for (let i = 0; i <= 20; i++) {
+                            const val = pValues[i];
+                            const y = scales.y.getPixelForValue(val);
 
-                        // If we have detailed percentiles, use them for a rich gradient
-                        if (d.Percentiles && d.Percentiles.length === 21) {
-                            const pValues = d.Percentiles.map(v => v / 1000000);
+                            // Calculate normalized position in the gradient [0, 1] relative to the bar height
+                            // The gradient is defined from topY (P99) to bottomY (P1).
+                            let stop = (y - topY) / (bottomY - topY);
+                            // Clamp to [0, 1] - values outside P1-P99 (like P0 or P100) will be clipped to the ends
+                            stop = Math.max(0, Math.min(1, stop));
 
-                            // Bar boundaries (match barData logic)
-                            const p1Val = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : pValues[0]) / 1000000;
-                            const p99Val = (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : pValues[20]) / 1000000;
+                            // Color intensity:
+                            // i=10 (Median) -> Darkest (0)
+                            // i=0 or i=20 -> Lightest (1)
+                            const dist = Math.abs(i - 10);
+                            // brightness: 0 (Black) to 200 (Light Gray)
+                            const brightness = Math.floor((dist / 10) * 200);
 
-                            const topY = scales.y.getPixelForValue(p99Val);
-                            const bottomY = scales.y.getPixelForValue(p1Val);
-
-                            // Check for zero height or invalid range
-                            if (Math.abs(topY - bottomY) < 0.1) return 'rgba(0,0,0,1)';
-
-                            const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
-
-                            // Collect all stops first
-                            const potentialStops = [];
-
-                            // 21 points: 0, 5, 10 ... 100.
-                            // Index 10 is Median (P50).
-                            for (let i = 0; i <= 20; i++) {
-                                const val = pValues[i];
-                                const y = scales.y.getPixelForValue(val);
-
-                                // Calculate normalized position in the gradient [0, 1] relative to the bar height
-                                // The gradient is defined from topY (P99) to bottomY (P1).
-                                let stop = (y - topY) / (bottomY - topY);
-                                // Clamp to [0, 1] - values outside P1-P99 (like P0 or P100) will be clipped to the ends
-                                stop = Math.max(0, Math.min(1, stop));
-
-                                // Color intensity:
-                                // i=10 (Median) -> Darkest (0)
-                                // i=0 or i=20 -> Lightest (1)
-                                const dist = Math.abs(i - 10);
-                                // brightness: 0 (Black) to 200 (Light Gray)
-                                const brightness = Math.floor((dist / 10) * 200);
-
-                                potentialStops.push({ stop, brightness });
-                            }
-
-                            // Filter duplicate stops: ensure darkest color wins at any given offset
-                            const uniqueStops = new Map();
-                            for (const s of potentialStops) {
-                                // Round to avoid float issues
-                                const key = Math.round(s.stop * 10000);
-                                if (!uniqueStops.has(key)) {
-                                    uniqueStops.set(key, s.brightness);
-                                } else {
-                                    const current = uniqueStops.get(key);
-                                    if (s.brightness < current) { // Darker wins (lower brightness)
-                                        uniqueStops.set(key, s.brightness);
-                                    }
-                                }
-                            }
-
-                            // Add filtered stops to gradient
-                            const sortedKeys = Array.from(uniqueStops.keys()).sort((a, b) => a - b);
-                            for (const k of sortedKeys) {
-                                const stop = k / 10000;
-                                const b = uniqueStops.get(k);
-                                gradient.addColorStop(stop, `rgba(${b}, ${b}, ${b}, 1)`);
-                            }
-
-                            return gradient;
+                            potentialStops.push({ stop, brightness });
                         }
 
-                        // Fallback to simple gradient if Percentiles missing
-                        const minVal = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS)) / 1000000;
-                        const maxVal = (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS)) / 1000000;
-                        const medianVal = (d.P50 !== undefined && d.P50 !== 0 ? d.P50 : d.AvgNS) / 1000000;
+                        // Filter duplicate stops: ensure darkest color wins at any given offset
+                        const uniqueStops = new Map();
+                        for (const s of potentialStops) {
+                            // Round to avoid float issues
+                            const key = Math.round(s.stop * 10000);
+                            if (!uniqueStops.has(key)) {
+                                uniqueStops.set(key, s.brightness);
+                            } else {
+                                const current = uniqueStops.get(key);
+                                if (s.brightness < current) { // Darker wins (lower brightness)
+                                    uniqueStops.set(key, s.brightness);
+                                }
+                            }
+                        }
 
-                        const yMin = scales.y.getPixelForValue(minVal);
-                        const yMax = scales.y.getPixelForValue(maxVal);
-                        const yMedian = scales.y.getPixelForValue(medianVal);
-
-                        const gradient = ctx.createLinearGradient(0, yMax, 0, yMin);
-                        let medianStop = (yMedian - yMax) / (yMin - yMax);
-                        if (isNaN(medianStop)) medianStop = 0.5; // Single point
-                        medianStop = Math.max(0, Math.min(1, medianStop));
-
-                        gradient.addColorStop(0, 'rgba(200, 200, 200, 1)'); // Top/Max
-                        gradient.addColorStop(medianStop, 'rgba(0, 0, 0, 1)'); // Median
-                        gradient.addColorStop(1, 'rgba(200, 200, 200, 1)'); // Bottom/Min
+                        // Add filtered stops to gradient
+                        const sortedKeys = Array.from(uniqueStops.keys()).sort((a, b) => a - b);
+                        for (const k of sortedKeys) {
+                            const stop = k / 10000;
+                            const b = uniqueStops.get(k);
+                            gradient.addColorStop(stop, `rgba(${b}, ${b}, ${b}, 1)`);
+                        }
 
                         return gradient;
-                    },
-                    borderWidth: 0,
-                    barPercentage: 1.0,
-                    categoryPercentage: 1.0
-                };
-
-                const backgroundPlugin = {
-                    id: 'customCanvasBackgroundColor',
-                    beforeDraw: (chart) => {
-                        const { ctx, chartArea, scales } = chart;
-                        const xScale = scales.x;
-
-                        ctx.save();
-                        data.forEach((d, i) => {
-                            const total = d.ProbeCount + d.TimeoutCount;
-                            if (total === 0) return;
-                            const timeoutPct = d.TimeoutCount / total;
-
-                            // Calculate x-width of the bar
-                            // Simple approximation: width between ticks. 
-                            // Bar chart logic is complex for exact width, but we want background.
-                            // Access the meta data for the bar to get exact width?
-                            const meta = chart.getDatasetMeta(0);
-                            const bar = meta.data[i];
-
-                            if (bar) {
-                                const width = bar.width; // Bar width
-                                const x = bar.x - width / 2;
-
-                                // Color: White (0% timeout) -> Red (100% timeout)
-                                // We can use rgba(255, 0, 0, alpha) but that's transparent red on white.
-                                // Requirements: "white being no timeouts, continuing to 100% red background being 100% timeouts"
-                                // Mix White and Red. 
-                                // 0% -> 255, 255, 255
-                                // 100% -> 255, 0, 0
-                                // G/B channels go 255 -> 0
-                                const gb = Math.floor(255 * (1 - timeoutPct));
-                                ctx.fillStyle = `rgb(255, ${gb}, ${gb})`;
-
-                                // Draw full height of chart area
-                                ctx.fillRect(x, chartArea.top, width, chartArea.bottom - chartArea.top);
-                            }
-                        });
-                        ctx.restore();
                     }
-                };
 
-                new Chart(chartCtx, {
-                    type: 'bar',
-                    data: {
-                        labels: labels,
-                        datasets: [dataset]
+                    // Fallback to simple gradient if Percentiles missing
+                    const minVal = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS)) / 1000000;
+                    const maxVal = (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS)) / 1000000;
+                    const medianVal = (d.P50 !== undefined && d.P50 !== 0 ? d.P50 : d.AvgNS) / 1000000;
+
+                    const yMin = scales.y.getPixelForValue(minVal);
+                    const yMax = scales.y.getPixelForValue(maxVal);
+                    const yMedian = scales.y.getPixelForValue(medianVal);
+
+                    const gradient = ctx.createLinearGradient(0, yMax, 0, yMin);
+                    let medianStop = (yMedian - yMax) / (yMin - yMax);
+                    if (isNaN(medianStop)) medianStop = 0.5; // Single point
+                    medianStop = Math.max(0, Math.min(1, medianStop));
+
+                    gradient.addColorStop(0, 'rgba(200, 200, 200, 1)'); // Top/Max
+                    gradient.addColorStop(medianStop, 'rgba(0, 0, 0, 1)'); // Median
+                    gradient.addColorStop(1, 'rgba(200, 200, 200, 1)'); // Bottom/Min
+
+                    return gradient;
+                },
+                borderWidth: 0,
+                barPercentage: 1.0,
+                categoryPercentage: 1.0
+            };
+
+            const backgroundPlugin = {
+                id: 'customCanvasBackgroundColor',
+                beforeDraw: (chart) => {
+                    const { ctx, chartArea, scales } = chart;
+                    const xScale = scales.x;
+
+                    ctx.save();
+                    data.forEach((d, i) => {
+                        const total = d.ProbeCount + d.TimeoutCount;
+                        if (total === 0) return;
+                        const timeoutPct = d.TimeoutCount / total;
+
+                        // Calculate x-width of the bar
+                        // Simple approximation: width between ticks. 
+                        // Bar chart logic is complex for exact width, but we want background.
+                        // Access the meta data for the bar to get exact width?
+                        const meta = chart.getDatasetMeta(0);
+                        const bar = meta.data[i];
+
+                        if (bar) {
+                            const width = bar.width; // Bar width
+                            const x = bar.x - width / 2;
+
+                            // Color: White (0% timeout) -> Red (100% timeout)
+                            // We can use rgba(255, 0, 0, alpha) but that's transparent red on white.
+                            // Requirements: "white being no timeouts, continuing to 100% red background being 100% timeouts"
+                            // Mix White and Red. 
+                            // 0% -> 255, 255, 255
+                            // 100% -> 255, 0, 0
+                            // G/B channels go 255 -> 0
+                            const gb = Math.floor(255 * (1 - timeoutPct));
+                            ctx.fillStyle = `rgb(255, ${gb}, ${gb})`;
+
+                            // Draw full height of chart area
+                            ctx.fillRect(x, chartArea.top, width, chartArea.bottom - chartArea.top);
+                        }
+                    });
+                    ctx.restore();
+                }
+            };
+
+            new Chart(chartCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [dataset]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
                     },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        interaction: {
-                            mode: 'index',
-                            intersect: false,
-                        },
-                        scales: {
-                            x: { type: 'timeseries', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
-                            y: {
-                                type: 'linear',
-                                display: true,
-                                title: { display: true, text: 'Latency (ms)' }
-                            }
-                        },
-                        plugins: {
-                            zoom: {
-                                zoom: {
-                                    drag: {
-                                        enabled: true,
-                                    },
-                                    mode: 'x',
-                                    onZoomComplete: function ({ chart }) {
-                                        const { min, max } = chart.scales.x;
-                                        setTimeInputs(new Date(min), new Date(max));
-                                        // Trigger reload to get high-res data for new range?
-                                        // The user might want to drag again, or seeing the inputs update is enough.
-                                        // Let's reload to be consistent with "Update" button which fetches data for the range.
-                                        // However, reload might reset the zoom if we are not careful.
-                                        // Actually, if we update the inputs, the user can click Update.
-                                        // But expected behavior "zoom in to that interval".
-                                        // If we reload, we get the data for that interval.
-                                        // Let's just update the inputs for now, and maybe trigger a fetch?
-                                        // If we fetch, we re-render the chart.
-                                        updateTimeRange();
-                                    }
-                                }
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    label: function (context) {
-                                        const i = context.dataIndex;
-                                        const d = data[i];
-                                        if (!d) return '';
-
-                                        const p0 = (d.P0 / 1000000).toFixed(2);
-                                        const p25 = (d.P25 / 1000000).toFixed(2);
-                                        const p50 = (d.P50 / 1000000).toFixed(2);
-                                        const p75 = (d.P75 / 1000000).toFixed(2);
-                                        const p100 = (d.P100 / 1000000).toFixed(2);
-
-                                        return [
-                                            `Max: ${p100} ms`,
-                                            `Q3: ${p75} ms`,
-                                            `Median: ${p50} ms`,
-                                            `Q1: ${p25} ms`,
-                                            `Min: ${p0} ms`,
-                                            `Success: ${d.ProbeCount}`,
-                                            `Timeout: ${d.TimeoutCount}`
-                                        ];
-                                    }
-                                }
-                            },
-                            legend: { display: false }
+                    scales: {
+                        x: { type: 'timeseries', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            title: { display: true, text: 'Latency (ms)' }
                         }
                     },
-                    plugins: [backgroundPlugin]
-                });
-
-            } else {
-                // --- LINE CHART MODE (Original) ---
-
-                // ... (Original data prep logic) ...
-                const p0Data = data.map(d => (d.P0 || d.MinNS) / 1000000);
-                const p25Data = data.map(d => (d.P25) / 1000000);
-                const p50Data = data.map(d => (d.P50) / 1000000);
-                const p75Data = data.map(d => (d.P75) / 1000000);
-                const p100Data = data.map(d => (d.P100 || d.MaxNS) / 1000000);
-                const timeoutPercentageData = data.map(d => {
-                    const total = d.ProbeCount + d.TimeoutCount;
-                    return total > 0 ? (d.TimeoutCount / total) * 100 : 0;
-                });
-
-                new Chart(chartCtx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {
-                                label: 'Timeout %',
-                                data: timeoutPercentageData,
-                                type: 'bar',
-                                backgroundColor: 'rgba(255, 99, 132, 0.5)',
-                                borderColor: 'rgba(255, 99, 132, 1)',
-                                borderWidth: 1,
-                                yAxisID: 'y1',
-                                barPercentage: 0.5
-                            },
-                            { label: 'Max (P100) (ms)', data: p100Data, borderColor: '#FF0000', backgroundColor: '#FF0000', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
-                            { label: 'Q3 (P75) (ms)', data: p75Data, borderColor: '#FF7F00', backgroundColor: '#FF7F00', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
-                            { label: 'Median (P50) (ms)', data: p50Data, borderColor: '#00FF00', backgroundColor: '#00FF00', fill: false, tension: 0.1, borderWidth: 2, yAxisID: 'y' },
-                            { label: 'Q1 (P25) (ms)', data: p25Data, borderColor: '#0000FF', backgroundColor: '#0000FF', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
-                            { label: 'Min (P0) (ms)', data: p0Data, borderColor: '#4B0082', backgroundColor: '#4B0082', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        interaction: {
-                            mode: 'index',
-                            intersect: false,
-                        },
-                        scales: {
-                            x: { type: 'timeseries', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } } },
-                            y: {
-                                type: 'linear',
-                                display: true,
-                                position: 'left',
-                                beginAtZero: true,
-                                title: { display: true, text: 'Latency (ms)' }
-                            },
-                            y1: {
-                                type: 'linear',
-                                display: true,
-                                position: 'right',
-                                beginAtZero: true,
-                                grid: {
-                                    drawOnChartArea: false,
+                    plugins: {
+                        zoom: {
+                            zoom: {
+                                drag: {
+                                    enabled: true,
                                 },
-                                title: { display: true, text: 'Timeouts (%)' },
-                                ticks: {
-                                    callback: function (value) {
-                                        return value + "%"
-                                    }
-                                },
-                                min: 0,
-                                max: 100
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setTimeInputs(new Date(min), new Date(max));
+                                    // Trigger reload to get high-res data for new range?
+                                    // The user might want to drag again, or seeing the inputs update is enough.
+                                    // Let's reload to be consistent with "Update" button which fetches data for the range.
+                                    // However, reload might reset the zoom if we are not careful.
+                                    // Actually, if we update the inputs, the user can click Update.
+                                    // But expected behavior "zoom in to that interval".
+                                    // If we reload, we get the data for that interval.
+                                    // Let's just update the inputs for now, and maybe trigger a fetch?
+                                    // If we fetch, we re-render the chart.
+                                    updateTimeRange();
+                                }
                             }
                         },
-                        plugins: {
-                            zoom: {
-                                zoom: {
-                                    drag: {
-                                        enabled: true,
-                                    },
-                                    mode: 'x',
-                                    onZoomComplete: function ({ chart }) {
-                                        const { min, max } = chart.scales.x;
-                                        setTimeInputs(new Date(min), new Date(max));
-                                        updateTimeRange();
-                                    }
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    const i = context.dataIndex;
+                                    const d = data[i];
+                                    if (!d) return '';
+
+                                    const p0 = (d.P0 / 1000000).toFixed(2);
+                                    const p25 = (d.P25 / 1000000).toFixed(2);
+                                    const p50 = (d.P50 / 1000000).toFixed(2);
+                                    const p75 = (d.P75 / 1000000).toFixed(2);
+                                    const p100 = (d.P100 / 1000000).toFixed(2);
+
+                                    return [
+                                        `Max: ${p100} ms`,
+                                        `Q3: ${p75} ms`,
+                                        `Median: ${p50} ms`,
+                                        `Q1: ${p25} ms`,
+                                        `Min: ${p0} ms`,
+                                        `Success: ${d.ProbeCount}`,
+                                        `Timeout: ${d.TimeoutCount}`
+                                    ];
+                                }
+                            }
+                        },
+                        legend: { display: false }
+                    }
+                },
+                plugins: [backgroundPlugin]
+            });
+
+        } else {
+            // --- LINE CHART MODE (Original) ---
+
+            // ... (Original data prep logic) ...
+            const p0Data = data.map(d => (d.P0 || d.MinNS) / 1000000);
+            const p25Data = data.map(d => (d.P25) / 1000000);
+            const p50Data = data.map(d => (d.P50) / 1000000);
+            const p75Data = data.map(d => (d.P75) / 1000000);
+            const p100Data = data.map(d => (d.P100 || d.MaxNS) / 1000000);
+            const timeoutPercentageData = data.map(d => {
+                const total = d.ProbeCount + d.TimeoutCount;
+                return total > 0 ? (d.TimeoutCount / total) * 100 : 0;
+            });
+
+            new Chart(chartCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Timeout %',
+                            data: timeoutPercentageData,
+                            type: 'bar',
+                            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1,
+                            yAxisID: 'y1',
+                            barPercentage: 0.5
+                        },
+                        { label: 'Max (P100) (ms)', data: p100Data, borderColor: '#FF0000', backgroundColor: '#FF0000', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                        { label: 'Q3 (P75) (ms)', data: p75Data, borderColor: '#FF7F00', backgroundColor: '#FF7F00', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                        { label: 'Median (P50) (ms)', data: p50Data, borderColor: '#00FF00', backgroundColor: '#00FF00', fill: false, tension: 0.1, borderWidth: 2, yAxisID: 'y' },
+                        { label: 'Q1 (P25) (ms)', data: p25Data, borderColor: '#0000FF', backgroundColor: '#0000FF', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                        { label: 'Min (P0) (ms)', data: p0Data, borderColor: '#4B0082', backgroundColor: '#4B0082', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    scales: {
+                        x: { type: 'timeseries', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } } },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            beginAtZero: true,
+                            title: { display: true, text: 'Latency (ms)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            beginAtZero: true,
+                            grid: {
+                                drawOnChartArea: false,
+                            },
+                            title: { display: true, text: 'Timeouts (%)' },
+                            ticks: {
+                                callback: function (value) {
+                                    return value + "%"
                                 }
                             },
-                            legend: {
-                                position: 'bottom'
+                            min: 0,
+                            max: 100
+                        }
+                    },
+                    plugins: {
+                        zoom: {
+                            zoom: {
+                                drag: {
+                                    enabled: true,
+                                },
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setTimeInputs(new Date(min), new Date(max));
+                                    updateTimeRange();
+                                }
                             }
+                        },
+                        legend: {
+                            position: 'bottom'
                         }
                     }
-                });
-            }
+                }
+            });
         }
+    }
 
-        loadTargets();
-    </script>
-</body>
-
-</html>
+    loadTargets();
+</script>
+</script>
+{{template "footer" .}}

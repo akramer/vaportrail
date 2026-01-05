@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"math"
 	"net/http"
@@ -31,7 +32,23 @@ type Server struct {
 }
 
 func New(cfg *config.ServerConfig, database *db.DB, sched *scheduler.Scheduler) *Server {
-	tmpl, err := template.ParseFS(templatesJS, "templates/*.html")
+	funcMap := template.FuncMap{
+		"byteSize": func(b int64) string {
+			const unit = 1024
+			if b < unit {
+				return fmt.Sprintf("%d B", b)
+			}
+			div, exp := int64(unit), 0
+			for n := b / unit; n >= unit; n /= unit {
+				div *= unit
+				exp++
+			}
+			return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+		},
+		"printf": fmt.Sprintf,
+	}
+
+	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templatesJS, "templates/*.html")
 	if err != nil {
 		panic(err)
 	}
@@ -57,6 +74,7 @@ func (s *Server) routes() {
 	s.router.Delete("/api/targets/{id}", s.handleDeleteTarget)
 	s.router.Get("/api/results/{id}", s.handleGetResults)
 	s.router.Get("/graph/{id}", s.handleGraph)
+	s.router.Get("/status", s.handleStatus)
 }
 
 func (s *Server) Start() error {
@@ -431,6 +449,69 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "graph.html", target); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+type StatusPageData struct {
+	Name          string
+	DBSize        int64
+	PageCount     int64
+	PageSize      int64
+	FreelistCount int64
+	TDigestStats  []db.TDigestStat
+}
+
+func (s StatusPageData) DBSizeString() string {
+	const unit = 1024
+	if s.DBSize < unit {
+		return fmt.Sprintf("%d B", s.DBSize)
+	}
+	div, exp := int64(unit), 0
+	for n := s.DBSize / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(s.DBSize)/float64(div), "KMGTPE"[exp])
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	dbSize, err := s.db.GetDBSizeBytes()
+	if err != nil {
+		http.Error(w, "Failed to get DB size: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pageCount, err := s.db.GetPageCount()
+	if err != nil {
+		http.Error(w, "Failed to get page count: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pageSize, err := s.db.GetPageSize()
+	if err != nil {
+		http.Error(w, "Failed to get page size: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	freelistCount, err := s.db.GetFreelistCount()
+	if err != nil {
+		http.Error(w, "Failed to get freelist count: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tdStats, err := s.db.GetTDigestStats()
+	if err != nil {
+		http.Error(w, "Failed to get tdigest stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := StatusPageData{
+		Name:          "System Status",
+		DBSize:        dbSize,
+		PageCount:     pageCount,
+		PageSize:      pageSize,
+		FreelistCount: freelistCount,
+		TDigestStats:  tdStats,
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

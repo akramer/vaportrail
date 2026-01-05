@@ -195,6 +195,27 @@ func (m *MockStore) GetEarliestRawResultTime(targetID int64) (time.Time, error) 
 	return minTime, nil
 }
 
+// MockStore implements db.Store interface
+func (m *MockStore) GetDBSizeBytes() (int64, error) {
+	return 0, nil
+}
+
+func (m *MockStore) GetPageCount() (int64, error) {
+	return 0, nil
+}
+
+func (m *MockStore) GetPageSize() (int64, error) {
+	return 0, nil
+}
+
+func (m *MockStore) GetFreelistCount() (int64, error) {
+	return 0, nil
+}
+
+func (m *MockStore) GetTDigestStats() ([]db.TDigestStat, error) {
+	return nil, nil
+}
+
 // MockRunner implements probe.Runner for testing
 type MockRunner struct {
 	RunFn func(cfg probe.Config) (float64, error)

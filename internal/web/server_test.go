@@ -206,11 +206,16 @@ func TestHandleGetResults_Raw(t *testing.T) {
 	rr = httptest.NewRecorder()
 	s.router.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400 for >1000 results, got %v", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for >1000 results (capped), got %v", rr.Code)
 	}
-	if rr.Body.String() != "Too many raw results (limit 1000). Please shorten the time range.\n" {
-		t.Errorf("Unexpected error message: %q", rr.Body.String())
+
+	var cappedResults []APIResult
+	if err := json.NewDecoder(rr.Body).Decode(&cappedResults); err != nil {
+		t.Errorf("Failed to decode response: %v", err)
+	}
+	if len(cappedResults) != 1000 {
+		t.Errorf("Expected 1000 capped results, got %d", len(cappedResults))
 	}
 }
 
@@ -264,4 +269,46 @@ func TestHandleGraph(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("Expected status 404 for non-existent target, got %v", rr.Code)
 	}
+}
+
+func TestHandleStatus(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+
+	req := httptest.NewRequest("GET", "/status", nil)
+	rr := httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %v", rr.Code)
+	}
+
+	// Verify some content to ensure template rendered
+	if !contains(rr.Body.String(), "System Status") {
+		t.Errorf("Expected 'System Status' in response body, got:\n%s", rr.Body.String())
+	}
+	if !contains(rr.Body.String(), "Database Statistics") {
+		t.Errorf("Expected 'Database Statistics' in response body")
+	}
+}
+
+func TestHandleDashboard(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %v", rr.Code)
+	}
+
+	if !contains(rr.Body.String(), "Dashboard") {
+		t.Errorf("Expected 'Dashboard' in response body, got:\n%s", rr.Body.String())
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && s[0:len(substr)] == substr || len(s) > len(substr) && contains(s[1:], substr)
 }

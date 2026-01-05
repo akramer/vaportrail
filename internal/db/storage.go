@@ -37,6 +37,21 @@ type Store interface {
 	DeleteRawResultsBefore(targetID int64, cutoff time.Time) error
 	DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error
 	GetEarliestRawResultTime(targetID int64) (time.Time, error)
+
+	// Status Page Stats
+	GetDBSizeBytes() (int64, error)
+	GetPageCount() (int64, error)
+	GetPageSize() (int64, error)
+	GetFreelistCount() (int64, error)
+	GetTDigestStats() ([]TDigestStat, error)
+}
+
+type TDigestStat struct {
+	TargetName    string
+	WindowSeconds int
+	TotalBytes    int64
+	Count         int64
+	AvgBytes      float64
 }
 
 type DB struct {
@@ -354,4 +369,70 @@ func parseDBTime(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("failed to parse DB time: %s", s)
+}
+
+func (d *DB) GetDBSizeBytes() (int64, error) {
+	var pageCount, pageSize int64
+	if err := d.QueryRow("PRAGMA page_count").Scan(&pageCount); err != nil {
+		return 0, err
+	}
+	if err := d.QueryRow("PRAGMA page_size").Scan(&pageSize); err != nil {
+		return 0, err
+	}
+	return pageCount * pageSize, nil
+}
+
+func (d *DB) GetPageCount() (int64, error) {
+	var count int64
+	if err := d.QueryRow("PRAGMA page_count").Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (d *DB) GetPageSize() (int64, error) {
+	var size int64
+	if err := d.QueryRow("PRAGMA page_size").Scan(&size); err != nil {
+		return 0, err
+	}
+	return size, nil
+}
+
+func (d *DB) GetFreelistCount() (int64, error) {
+	var count int64
+	if err := d.QueryRow("PRAGMA freelist_count").Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
+	rows, err := d.Query(`
+		SELECT 
+			t.name, 
+			ar.window_seconds, 
+			SUM(LENGTH(ar.tdigest_data)) as total_bytes, 
+			COUNT(*) as count 
+		FROM aggregated_results ar
+		JOIN targets t ON ar.target_id = t.id
+		GROUP BY t.id, ar.window_seconds
+		ORDER BY total_bytes DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stats []TDigestStat
+	for rows.Next() {
+		var s TDigestStat
+		if err := rows.Scan(&s.TargetName, &s.WindowSeconds, &s.TotalBytes, &s.Count); err != nil {
+			return nil, err
+		}
+		if s.Count > 0 {
+			s.AvgBytes = float64(s.TotalBytes) / float64(s.Count)
+		}
+		stats = append(stats, s)
+	}
+	return stats, nil
 }
