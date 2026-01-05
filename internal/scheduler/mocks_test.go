@@ -216,6 +216,15 @@ func (m *MockStore) GetTDigestStats() ([]db.TDigestStat, error) {
 	return nil, nil
 }
 
+func (m *MockStore) GetRawStats() (*db.RawStats, error) {
+	// Calculate from in-memory map
+	var count int64
+	for key := range m.RawResults {
+		count += int64(len(m.RawResults[key]))
+	}
+	return &db.RawStats{Count: count, TotalBytes: count * 50}, nil
+}
+
 // MockRunner implements probe.Runner for testing
 type MockRunner struct {
 	RunFn func(cfg probe.Config) (float64, error)

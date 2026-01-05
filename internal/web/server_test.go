@@ -290,6 +290,9 @@ func TestHandleStatus(t *testing.T) {
 	if !contains(rr.Body.String(), "Database Statistics") {
 		t.Errorf("Expected 'Database Statistics' in response body")
 	}
+	if !contains(rr.Body.String(), "Raw Data Statistics") {
+		t.Errorf("Expected 'Raw Data Statistics' in response body, got:\n%s", rr.Body.String())
+	}
 }
 
 func TestHandleDashboard(t *testing.T) {

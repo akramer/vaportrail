@@ -460,6 +460,7 @@ type StatusPageData struct {
 	PageSize      int64
 	FreelistCount int64
 	TDigestStats  []db.TDigestStat
+	RawStats      *db.RawStats
 }
 
 func (s StatusPageData) DBSizeString() string {
@@ -501,6 +502,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to get tdigest stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	rawStats, err := s.db.GetRawStats()
+	if err != nil {
+		http.Error(w, "Failed to get raw stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	data := StatusPageData{
 		Name:          "System Status",
@@ -509,6 +515,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		PageSize:      pageSize,
 		FreelistCount: freelistCount,
 		TDigestStats:  tdStats,
+		RawStats:      rawStats,
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {

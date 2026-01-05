@@ -44,6 +44,7 @@ type Store interface {
 	GetPageSize() (int64, error)
 	GetFreelistCount() (int64, error)
 	GetTDigestStats() ([]TDigestStat, error)
+	GetRawStats() (*RawStats, error)
 }
 
 type TDigestStat struct {
@@ -52,6 +53,11 @@ type TDigestStat struct {
 	TotalBytes    int64
 	Count         int64
 	AvgBytes      float64
+}
+
+type RawStats struct {
+	Count      int64
+	TotalBytes int64
 }
 
 type DB struct {
@@ -435,4 +441,31 @@ func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
 		stats = append(stats, s)
 	}
 	return stats, nil
+}
+
+func (d *DB) GetRawStats() (*RawStats, error) {
+	// Estimate size:
+	// time (datetime string) ~30 bytes
+	// target_id (int) ~8 bytes
+	// latency (float) ~8 bytes
+	// overhead ~ overhead
+	// Or use length(time) + length(latency)? latency is real.
+	// SQLite store:
+	// time: TEXT (RFC3339Nano) ~ 35 bytes?
+	// target_id: INTEGER
+	// latency: REAL
+	var count int64
+	// Just counting rows for now and estimating size.
+	if err := d.QueryRow("SELECT COUNT(*) FROM raw_results").Scan(&count); err != nil {
+		return nil, err
+	}
+
+	// Better estimation query if we want to be closer:
+	// sum(payload) isn't easy without iterating or complex generic sql.
+	// But calculating size of time string is possible.
+	// Let's approximate: 50 bytes per row.
+	return &RawStats{
+		Count:      count,
+		TotalBytes: count * 50,
+	}, nil
 }

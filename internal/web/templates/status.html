@@ -36,6 +36,27 @@
             </div>
         </div>
     </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                Raw Data Statistics
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tbody>
+                        <tr>
+                            <td>Row Count</td>
+                            <td>{{.RawStats.Count}}</td>
+                        </tr>
+                        <tr>
+                            <td>Estimated Size</td>
+                            <td>{{.RawStats.TotalBytes | byteSize}}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="row">
