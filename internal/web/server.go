@@ -55,6 +55,7 @@ func (s *Server) routes() {
 	s.router.Put("/api/targets/{id}", s.handleUpdateTarget)
 	s.router.Delete("/api/targets/{id}", s.handleDeleteTarget)
 	s.router.Get("/api/results/{id}", s.handleGetResults)
+	s.router.Get("/graph/{id}", s.handleGraph)
 }
 
 func (s *Server) Start() error {
@@ -307,4 +308,23 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(apiResults)
+}
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	target, err := s.db.GetTarget(id)
+	if err != nil {
+		http.Error(w, "Target not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "graph.html", target); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

@@ -62,6 +62,13 @@ func (m *MockStore) DeleteTarget(id int64) error {
 	return nil
 }
 
+func (m *MockStore) GetTarget(id int64) (*db.Target, error) {
+	if t, ok := m.Targets[id]; ok {
+		return &t, nil
+	}
+	return nil, errors.New("target not found")
+}
+
 func (m *MockStore) AddResult(r *db.Result) error {
 	if m.AddResultFn != nil {
 		return m.AddResultFn(r)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -110,5 +111,57 @@ func TestHandleGetResults(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400 for invalid start time, got %v", rr.Code)
+	}
+}
+
+func TestHandleGraph(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+
+	// Add a target
+	target := &db.Target{
+		Name:      "Test Target",
+		Address:   "example.com",
+		ProbeType: "http",
+	}
+	id, err := database.AddTarget(target)
+	if err != nil {
+		t.Fatalf("Failed to add target: %v", err)
+	}
+
+	// Test valid ID
+	req := httptest.NewRequest("GET", "/graph/"+strconv.Itoa(int(id)), nil)
+	rr := httptest.NewRecorder()
+
+	// Need to register route properly in setupTestServer or use router
+	// setupTestServer calls s.routes() which registers routes on s.router
+
+	// chi router context needs to be set up if calling handler directly,
+	// but ServeHTTP does it for us.
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %v", rr.Code)
+	}
+
+	// Test invalid ID
+	req = httptest.NewRequest("GET", "/graph/999", nil)
+	rr = httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	// GetTarget returns error if not found, handler returns 404
+	// Wait, GetTarget implementation:
+	// err := d.QueryRow(...).Scan(...)
+	// if err == sql.ErrNoRows ...
+	// My GetTarget implementation returns err if Scan fails.
+	// If id not found, Scan returns ErrNoRows.
+	// Handler checks err and returns 404?
+	// Handler:
+	// 	target, err := s.db.GetTarget(id)
+	// 	if err != nil { http.Error(w, ..., http.StatusNotFound) }
+	// So 404 is expected.
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404 for non-existent target, got %v", rr.Code)
 	}
 }

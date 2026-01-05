@@ -21,6 +21,7 @@ type Store interface {
 	AddTarget(t *Target) (int64, error)
 	UpdateTarget(t *Target) error
 	GetTargets() ([]Target, error)
+	GetTarget(id int64) (*Target, error)
 	DeleteTarget(id int64) error
 	AddResult(r *Result) error
 	GetResults(targetID int64, limit int) ([]Result, error)
@@ -145,6 +146,17 @@ func (d *DB) GetTargets() ([]Target, error) {
 		targets = append(targets, t)
 	}
 	return targets, nil
+}
+
+func (d *DB) GetTarget(id int64) (*Target, error) {
+	var t Target
+	err := d.QueryRow(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout FROM targets WHERE id = ?`, id).Scan(
+		&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func (d *DB) GetResults(targetID int64, limit int) ([]Result, error) {

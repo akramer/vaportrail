@@ -201,6 +201,7 @@
                     <h3>${t.Name} (${t.ProbeType})</h3>
                     <p>Address: ${t.Address}</p>
                     <p>Interval: ${t.ProbeInterval}s / Commit: ${t.CommitInterval}s / Timeout: ${t.Timeout || 5}s</p>
+                    <button onclick="window.location.href='/graph/${t.ID}'">View Details</button>
                     <button onclick="editTarget(${t.ID})">Edit</button>
                     <button style="background-color: #ff4444;" onclick="deleteTarget(${t.ID})">Delete</button>
                     <div class="chart-container">
