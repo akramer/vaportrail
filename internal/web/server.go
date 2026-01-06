@@ -125,6 +125,11 @@ func (s *Server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	// Drop any user provided config
 	t.ProbeConfig = ""
 
+	// Apply default retention policies if not provided
+	if t.RetentionPolicies == "" {
+		t.RetentionPolicies = scheduler.DefaultPoliciesJSON()
+	}
+
 	id, err := s.db.AddTarget(&t)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -305,7 +310,11 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	durationSeconds := end.Sub(start).Seconds()
 	desiredWindow := max(int(durationSeconds/1000.0), 1)
 
-	policies := scheduler.GetRetentionPolicies(*target)
+	policies, err := scheduler.GetRetentionPolicies(*target)
+	if err != nil {
+		http.Error(w, "Target has no retention policies configured", http.StatusInternalServerError)
+		return
+	}
 
 	// Collect available windows from policies (and 0 for raw if 0 exists)
 	// Actually policies usually define what we HAVE.

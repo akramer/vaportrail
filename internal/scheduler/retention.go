@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -62,12 +61,10 @@ func (rm *RetentionManager) enforceRetention() {
 	}
 
 	for _, t := range targets {
-		policies := defaultPolicies
-		if t.RetentionPolicies != "" && t.RetentionPolicies != "[]" {
-			var p []RetentionPolicy
-			if err := json.Unmarshal([]byte(t.RetentionPolicies), &p); err == nil && len(p) > 0 {
-				policies = p
-			}
+		policies, err := GetRetentionPolicies(t)
+		if err != nil {
+			// Skip targets with no policies configured
+			continue
 		}
 
 		for _, p := range policies {

@@ -34,9 +34,10 @@ func TestHandleGetResults(t *testing.T) {
 
 	// Add a target
 	target := &db.Target{
-		Name:      "Test Target",
-		Address:   "example.com",
-		ProbeType: "http",
+		Name:              "Test Target",
+		Address:           "example.com",
+		ProbeType:         "http",
+		RetentionPolicies: `[{"window": 0, "retention": 604800}, {"window": 60, "retention": 15768000}]`,
 	}
 	id, err := database.AddTarget(target)
 	if err != nil {
@@ -143,7 +144,12 @@ func TestHandleGetResults_Raw(t *testing.T) {
 	defer database.Close()
 
 	// Add a target
-	target := &db.Target{Name: "Test Target", Address: "example.com", ProbeType: "http"}
+	target := &db.Target{
+		Name:              "Test Target",
+		Address:           "example.com",
+		ProbeType:         "http",
+		RetentionPolicies: `[{"window": 0, "retention": 604800}, {"window": 60, "retention": 15768000}]`,
+	}
 	id, err := database.AddTarget(target)
 	if err != nil {
 		t.Fatalf("Failed to add target: %v", err)
@@ -225,9 +231,10 @@ func TestHandleGraph(t *testing.T) {
 
 	// Add a target
 	target := &db.Target{
-		Name:      "Test Target",
-		Address:   "example.com",
-		ProbeType: "http",
+		Name:              "Test Target",
+		Address:           "example.com",
+		ProbeType:         "http",
+		RetentionPolicies: `[{"window": 0, "retention": 604800}, {"window": 60, "retention": 15768000}]`,
 	}
 	id, err := database.AddTarget(target)
 	if err != nil {

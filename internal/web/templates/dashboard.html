@@ -54,6 +54,27 @@
             <label for="timeout">Timeout (s):</label>
             <input type="number" id="timeout" name="timeout" step="any" value="5.0">
         </div>
+
+        <details id="retention-config-section">
+            <summary style="cursor: pointer; font-weight: bold; margin-bottom: 10px;">Retention & Rollup Configuration
+            </summary>
+            <div style="padding: 10px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                <table id="retention-tiers-table" style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="text-align: left; padding: 5px;">Window (seconds)</th>
+                            <th style="text-align: left; padding: 5px;">Retention</th>
+                            <th style="text-align: left; padding: 5px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="retention-tiers-body">
+                        <!-- Rows will be dynamically populated -->
+                    </tbody>
+                </table>
+                <button type="button" onclick="addRetentionTier()" style="margin-top: 10px;">+ Add Tier</button>
+            </div>
+        </details>
+
         <button type="submit">Save</button>
         <button type="button" onclick="document.getElementById('add-target-modal').style.display='none'">Cancel</button>
     </form>
@@ -62,6 +83,153 @@
 <script>
     let currentTargets = []; // Store targets globally for easy access
     let currentGraphMode = 'heatmap';
+
+    // Default retention policies for new targets
+    const defaultPolicies = [
+        { window: 0, retention: 604800 },         // Raw: 7 days
+        { window: 60, retention: 15768000 },      // 1m: 6 months
+        { window: 300, retention: 31536000 },     // 5m: 1 year
+        { window: 3600, retention: 315360000 },   // 1h: 10 years
+        { window: 86400, retention: 3153600000 }  // 1d: ~100 years
+    ];
+
+    // Format seconds as human-readable string
+    function formatSeconds(seconds) {
+        if (seconds === 0) return 'Raw';
+        if (seconds < 60) return seconds + 's';
+        if (seconds < 3600) return (seconds / 60) + 'm';
+        if (seconds < 86400) return (seconds / 3600) + 'h';
+        return (seconds / 86400) + 'd';
+    }
+
+    // Create retention dropdown options
+    function createRetentionSelect(currentValue) {
+        const presets = [
+            { value: 86400, label: '1 day' },
+            { value: 259200, label: '3 days' },
+            { value: 604800, label: '1 week' },
+            { value: 2592000, label: '1 month' },
+            { value: 7776000, label: '3 months' },
+            { value: 15768000, label: '6 months' },
+            { value: 31536000, label: '1 year' },
+            { value: 63072000, label: '2 years' },
+            { value: 157680000, label: '5 years' },
+            { value: 315360000, label: '10 years' },
+            { value: 3153600000, label: '100 years' }
+        ];
+
+        let html = '<select class="retention-select" onchange="handleRetentionSelectChange(this)">';
+        let found = false;
+        for (const p of presets) {
+            const selected = p.value === currentValue ? ' selected' : '';
+            if (p.value === currentValue) found = true;
+            html += `<option value="${p.value}"${selected}>${p.label}</option>`;
+        }
+        html += `<option value="custom"${!found ? ' selected' : ''}>Custom...</option>`;
+        html += '</select>';
+        html += `<input type="number" class="retention-custom" value="${!found ? currentValue : ''}" style="width: 80px; display: ${!found ? 'inline-block' : 'none'};" placeholder="seconds" min="1">`;
+        return html;
+    }
+
+    // Create window input (editable for non-raw tiers)
+    function createWindowInput(windowValue, isRaw) {
+        if (isRaw) {
+            return '<span>0 (Raw)</span><input type="hidden" class="window-input" value="0">';
+        }
+        return `<input type="number" class="window-input" value="${windowValue}" min="1" style="width: 80px;">`;
+    }
+
+    // Add a new retention tier row
+    function addRetentionTierRow(window, retention) {
+        const tbody = document.getElementById('retention-tiers-body');
+        const isRaw = window === 0;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td style="padding: 5px;">${createWindowInput(window, isRaw)}</td>
+            <td style="padding: 5px;">${createRetentionSelect(retention)}</td>
+            <td style="padding: 5px;">
+                ${!isRaw ? '<button type="button" onclick="removeRetentionTier(this)" style="background: #ff4444; color: white; border: none; padding: 2px 8px; cursor: pointer;">×</button>' : ''}
+            </td>
+        `;
+        tbody.appendChild(row);
+    }
+
+    // Add a new custom tier
+    function addRetentionTier() {
+        // Default to a new tier with 600s (10m) window and 1 year retention
+        addRetentionTierRow(600, 31536000);
+    }
+
+    // Remove a tier
+    function removeRetentionTier(btn) {
+        const row = btn.closest('tr');
+        row.remove();
+    }
+
+    // Handle retention dropdown change
+    function handleRetentionSelectChange(select) {
+        const customInput = select.nextElementSibling;
+        if (select.value === 'custom') {
+            customInput.style.display = 'inline-block';
+            customInput.focus();
+        } else {
+            customInput.style.display = 'none';
+        }
+    }
+
+    // Build retention policies JSON from form
+    function buildRetentionPoliciesJSON() {
+        const rows = document.querySelectorAll('#retention-tiers-body tr');
+        const policies = [];
+        rows.forEach(row => {
+            const windowInput = row.querySelector('.window-input');
+            const retentionSelect = row.querySelector('.retention-select');
+            const retentionCustom = row.querySelector('.retention-custom');
+
+            const windowVal = parseInt(windowInput.value) || 0;
+            let retentionVal;
+            if (retentionSelect.value === 'custom') {
+                retentionVal = parseInt(retentionCustom.value) || 604800;
+            } else {
+                retentionVal = parseInt(retentionSelect.value);
+            }
+
+            policies.push({ window: windowVal, retention: retentionVal });
+        });
+
+        // Sort by window size
+        policies.sort((a, b) => a.window - b.window);
+        return JSON.stringify(policies);
+    }
+
+    // Parse retention policies JSON and populate form
+    function populateRetentionForm(policiesJSON) {
+        const tbody = document.getElementById('retention-tiers-body');
+        tbody.innerHTML = '';
+
+        let policies = [];
+        try {
+            policies = JSON.parse(policiesJSON || '[]');
+        } catch (e) {
+            policies = [];
+        }
+
+        if (policies.length === 0) {
+            policies = defaultPolicies;
+        }
+
+        // Sort by window
+        policies.sort((a, b) => a.window - b.window);
+
+        policies.forEach(p => {
+            addRetentionTierRow(p.window, p.retention);
+        });
+    }
+
+    // Reset retention form to defaults
+    function resetRetentionForm() {
+        populateRetentionForm(JSON.stringify(defaultPolicies));
+    }
 
     // Initialize time inputs
     function initTimeInputs() {
@@ -131,7 +299,8 @@
             Address: address,
             ProbeType: probeType,
             ProbeInterval: probeInterval,
-            Timeout: timeout
+            Timeout: timeout,
+            RetentionPolicies: buildRetentionPoliciesJSON()
         };
 
         let res;
@@ -194,6 +363,7 @@
         document.getElementById('probe-type').value = t.ProbeType;
         document.getElementById('probe-interval').value = t.ProbeInterval;
         document.getElementById('timeout').value = t.Timeout || 5.0;
+        populateRetentionForm(t.RetentionPolicies);
 
         document.getElementById('add-target-modal').style.display = 'block';
     }
@@ -203,6 +373,7 @@
         document.getElementById('target-id').value = '';
         document.getElementById('target-form').reset();
         document.getElementById('timeout').value = 5.0;
+        resetRetentionForm();
         document.getElementById('add-target-modal').style.display = 'block';
     }
 

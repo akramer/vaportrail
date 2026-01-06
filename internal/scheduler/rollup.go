@@ -61,15 +61,37 @@ func sortPolicies(policies []RetentionPolicy) {
 	})
 }
 
-func GetRetentionPolicies(t db.Target) []RetentionPolicy {
-	policies := defaultPolicies
-	if t.RetentionPolicies != "" && t.RetentionPolicies != "[]" {
-		var p []RetentionPolicy
-		if err := json.Unmarshal([]byte(t.RetentionPolicies), &p); err == nil && len(p) > 0 {
-			policies = p
-		}
+// DefaultPolicies returns the default retention policies for use at target creation time.
+func DefaultPolicies() []RetentionPolicy {
+	// Return a copy to prevent mutation
+	result := make([]RetentionPolicy, len(defaultPolicies))
+	copy(result, defaultPolicies)
+	return result
+}
+
+// DefaultPoliciesJSON returns the default retention policies as a JSON string.
+func DefaultPoliciesJSON() string {
+	data, _ := json.Marshal(defaultPolicies)
+	return string(data)
+}
+
+// ErrNoRetentionPolicies is returned when a target has no retention policies configured.
+var ErrNoRetentionPolicies = errors.New("no retention policies configured")
+
+// GetRetentionPolicies parses and returns retention policies for a target.
+// Returns ErrNoRetentionPolicies if no policies are configured.
+func GetRetentionPolicies(t db.Target) ([]RetentionPolicy, error) {
+	if t.RetentionPolicies == "" || t.RetentionPolicies == "[]" {
+		return nil, ErrNoRetentionPolicies
 	}
-	return policies
+	var p []RetentionPolicy
+	if err := json.Unmarshal([]byte(t.RetentionPolicies), &p); err != nil {
+		return nil, fmt.Errorf("failed to parse retention policies: %w", err)
+	}
+	if len(p) == 0 {
+		return nil, ErrNoRetentionPolicies
+	}
+	return p, nil
 }
 
 type RollupManager struct {
@@ -120,7 +142,11 @@ func (rm *RollupManager) processRollups() {
 	}
 
 	for _, t := range targets {
-		policies := GetRetentionPolicies(t) // Use helper
+		policies, err := GetRetentionPolicies(t)
+		if err != nil {
+			// Skip targets with no policies configured
+			continue
+		}
 		// Ensure sorted
 		sortPolicies(policies)
 
