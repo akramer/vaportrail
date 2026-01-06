@@ -36,6 +36,7 @@ type Store interface {
 	GetAggregatedResults(targetID int64, windowSeconds int, start, end time.Time) ([]AggregatedResult, error)
 	DeleteRawResultsBefore(targetID int64, cutoff time.Time) error
 	DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error
+	DeleteAggregatedResultsByWindow(targetID int64, windowSeconds int) error
 	GetEarliestRawResultTime(targetID int64) (time.Time, error)
 
 	// Status Page Stats
@@ -338,6 +339,11 @@ func (d *DB) DeleteRawResultsBefore(targetID int64, cutoff time.Time) error {
 
 func (d *DB) DeleteAggregatedResultsBefore(targetID int64, windowSeconds int, cutoff time.Time) error {
 	_, err := d.Exec(`DELETE FROM aggregated_results WHERE target_id = ? AND window_seconds = ? AND time < ?`, targetID, windowSeconds, cutoff)
+	return err
+}
+
+func (d *DB) DeleteAggregatedResultsByWindow(targetID int64, windowSeconds int) error {
+	_, err := d.Exec(`DELETE FROM aggregated_results WHERE target_id = ? AND window_seconds = ?`, targetID, windowSeconds)
 	return err
 }
 

@@ -177,6 +177,13 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch existing target to compare retention policies
+	existingTarget, err := s.db.GetTarget(id)
+	if err != nil {
+		http.Error(w, "Target not found", http.StatusNotFound)
+		return
+	}
+
 	var t db.Target
 	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -184,19 +191,19 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	t.ID = id
 
+	var newPolicies []scheduler.RetentionPolicy
 	if t.RetentionPolicies != "" {
-		var policies []scheduler.RetentionPolicy
-		if err := json.Unmarshal([]byte(t.RetentionPolicies), &policies); err != nil {
+		if err := json.Unmarshal([]byte(t.RetentionPolicies), &newPolicies); err != nil {
 			http.Error(w, "Invalid retention policies JSON", http.StatusBadRequest)
 			return
 		}
 		// Validate (this also sorts them)
-		if err := scheduler.ValidateRetentionPolicies(policies); err != nil {
+		if err := scheduler.ValidateRetentionPolicies(newPolicies); err != nil {
 			http.Error(w, "Invalid retention policies: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		// Re-serialize sorted policies
-		sortedJSON, _ := json.Marshal(policies)
+		sortedJSON, _ := json.Marshal(newPolicies)
 		t.RetentionPolicies = string(sortedJSON)
 	}
 
@@ -214,6 +221,24 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	if _, err := probe.GetConfig(t.ProbeType, t.Address); err != nil {
 		http.Error(w, "Invalid probe type", http.StatusBadRequest)
 		return
+	}
+
+	// Detect removed retention policies and delete their data
+	oldPolicies, _ := scheduler.GetRetentionPolicies(*existingTarget)
+	newWindowSet := make(map[int]bool)
+	for _, p := range newPolicies {
+		newWindowSet[p.Window] = true
+	}
+	for _, oldP := range oldPolicies {
+		if !newWindowSet[oldP.Window] {
+			// This window was removed, delete its aggregated data
+			if oldP.Window == 0 {
+				// Raw data - we could delete it, but typically raw is retained if any policy exists
+				// For now, we skip raw data deletion on policy removal
+				continue
+			}
+			s.db.DeleteAggregatedResultsByWindow(id, oldP.Window)
+		}
 	}
 
 	if err := s.db.UpdateTarget(&t); err != nil {

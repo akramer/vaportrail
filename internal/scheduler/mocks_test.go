@@ -185,6 +185,17 @@ func (m *MockStore) DeleteAggregatedResultsBefore(targetID int64, windowSeconds 
 	return nil
 }
 
+func (m *MockStore) DeleteAggregatedResultsByWindow(targetID int64, windowSeconds int) error {
+	var keep []db.AggregatedResult
+	for _, r := range m.AggregatedResults[targetID] {
+		if r.WindowSeconds != windowSeconds {
+			keep = append(keep, r)
+		}
+	}
+	m.AggregatedResults[targetID] = keep
+	return nil
+}
+
 func (m *MockStore) GetEarliestRawResultTime(targetID int64) (time.Time, error) {
 	var minTime time.Time
 	for _, r := range m.RawResults[targetID] {
