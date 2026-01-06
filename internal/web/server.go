@@ -97,11 +97,14 @@ func (s *Server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid retention policies JSON", http.StatusBadRequest)
 			return
 		}
-		// Then validate policies logic
+		// Then validate policies logic (this also sorts them)
 		if err := scheduler.ValidateRetentionPolicies(policies); err != nil {
 			http.Error(w, "Invalid retention policies: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Re-serialize sorted policies
+		sortedJSON, _ := json.Marshal(policies)
+		t.RetentionPolicies = string(sortedJSON)
 	}
 
 	if t.Name == "" || t.Address == "" || t.ProbeType == "" {
@@ -187,10 +190,14 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid retention policies JSON", http.StatusBadRequest)
 			return
 		}
+		// Validate (this also sorts them)
 		if err := scheduler.ValidateRetentionPolicies(policies); err != nil {
 			http.Error(w, "Invalid retention policies: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Re-serialize sorted policies
+		sortedJSON, _ := json.Marshal(policies)
+		t.RetentionPolicies = string(sortedJSON)
 	}
 
 	if t.Name == "" || t.Address == "" || t.ProbeType == "" {
