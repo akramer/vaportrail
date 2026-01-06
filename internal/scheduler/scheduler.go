@@ -121,9 +121,6 @@ func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
 	if t.ProbeInterval <= 0 {
 		t.ProbeInterval = 1.0
 	}
-	if t.CommitInterval <= 0 {
-		t.CommitInterval = 60.0
-	}
 	if t.Timeout <= 0 {
 		t.Timeout = 5.0
 	}

@@ -110,7 +110,6 @@ type Target struct {
 	ProbeType         string
 	ProbeConfig       string // JSON
 	ProbeInterval     float64
-	CommitInterval    float64
 	Timeout           float64
 	RetentionPolicies string // JSON
 }
@@ -140,14 +139,11 @@ func (d *DB) AddTarget(t *Target) (int64, error) {
 	if t.ProbeInterval <= 0 {
 		t.ProbeInterval = 1.0
 	}
-	if t.CommitInterval <= 0 {
-		t.CommitInterval = 60.0
-	}
 	if t.Timeout <= 0 {
 		t.Timeout = 5.0
 	}
-	res, err := d.Exec(`INSERT INTO targets (name, address, probe_type, probe_config, probe_interval, commit_interval, timeout, retention_policies) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Address, t.ProbeType, t.ProbeConfig, t.ProbeInterval, t.CommitInterval, t.Timeout, t.RetentionPolicies)
+	res, err := d.Exec(`INSERT INTO targets (name, address, probe_type, probe_config, probe_interval, timeout, retention_policies) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Address, t.ProbeType, t.ProbeConfig, t.ProbeInterval, t.Timeout, t.RetentionPolicies)
 	if err != nil {
 		return 0, err
 	}
@@ -158,14 +154,11 @@ func (d *DB) UpdateTarget(t *Target) error {
 	if t.ProbeInterval <= 0 {
 		t.ProbeInterval = 1.0
 	}
-	if t.CommitInterval <= 0 {
-		t.CommitInterval = 60.0
-	}
 	if t.Timeout <= 0 {
 		t.Timeout = 5.0
 	}
-	_, err := d.Exec(`UPDATE targets SET name=?, address=?, probe_type=?, probe_interval=?, commit_interval=?, timeout=?, retention_policies=? WHERE id=?`,
-		t.Name, t.Address, t.ProbeType, t.ProbeInterval, t.CommitInterval, t.Timeout, t.RetentionPolicies, t.ID)
+	_, err := d.Exec(`UPDATE targets SET name=?, address=?, probe_type=?, probe_interval=?, timeout=?, retention_policies=? WHERE id=?`,
+		t.Name, t.Address, t.ProbeType, t.ProbeInterval, t.Timeout, t.RetentionPolicies, t.ID)
 	return err
 }
 
@@ -177,7 +170,7 @@ func (d *DB) AddResult(r *Result) error {
 }
 
 func (d *DB) GetTargets() ([]Target, error) {
-	rows, err := d.Query(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout, COALESCE(retention_policies, '[]') FROM targets`)
+	rows, err := d.Query(`SELECT id, name, address, probe_type, probe_config, probe_interval, timeout, COALESCE(retention_policies, '[]') FROM targets`)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +179,7 @@ func (d *DB) GetTargets() ([]Target, error) {
 	var targets []Target
 	for rows.Next() {
 		var t Target
-		if err := rows.Scan(&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout, &t.RetentionPolicies); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.Timeout, &t.RetentionPolicies); err != nil {
 			return nil, err
 		}
 		targets = append(targets, t)
@@ -196,8 +189,8 @@ func (d *DB) GetTargets() ([]Target, error) {
 
 func (d *DB) GetTarget(id int64) (*Target, error) {
 	var t Target
-	err := d.QueryRow(`SELECT id, name, address, probe_type, probe_config, probe_interval, commit_interval, timeout, COALESCE(retention_policies, '[]') FROM targets WHERE id = ?`, id).Scan(
-		&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.CommitInterval, &t.Timeout, &t.RetentionPolicies,
+	err := d.QueryRow(`SELECT id, name, address, probe_type, probe_config, probe_interval, timeout, COALESCE(retention_policies, '[]') FROM targets WHERE id = ?`, id).Scan(
+		&t.ID, &t.Name, &t.Address, &t.ProbeType, &t.ProbeConfig, &t.ProbeInterval, &t.Timeout, &t.RetentionPolicies,
 	)
 	if err != nil {
 		return nil, err

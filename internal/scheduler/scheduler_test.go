@@ -31,11 +31,10 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 
 	// Add a target
 	target := db.Target{
-		Name:           "MockTarget",
-		Address:        "example.com",
-		ProbeType:      "http",
-		ProbeInterval:  0.1, // 100ms
-		CommitInterval: 1.0, // 1s
+		Name:          "MockTarget",
+		Address:       "example.com",
+		ProbeType:     "http",
+		ProbeInterval: 0.1, // 100ms
 	}
 
 	id, _ := mockDB.AddTarget(&target)
@@ -94,11 +93,10 @@ func TestTargetRemovalRace_WithMocks(t *testing.T) {
 	}
 
 	target := db.Target{
-		Name:           "RaceTarget",
-		Address:        "127.0.0.1",
-		ProbeType:      "ping",
-		ProbeInterval:  0.01,
-		CommitInterval: 1.0,
+		Name:          "RaceTarget",
+		Address:       "127.0.0.1",
+		ProbeType:     "ping",
+		ProbeInterval: 0.01,
 	}
 	id, _ := mockDB.AddTarget(&target)
 	target.ID = id
@@ -143,12 +141,11 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	s.probeRunner = mockRunner
 
 	target := db.Target{
-		Name:           "TimeoutTarget",
-		Address:        "timeout.com",
-		ProbeType:      "http",
-		ProbeInterval:  0.1,  // 100ms
-		CommitInterval: 1.0,  // 1s
-		Timeout:        0.05, // 50ms (irrelevant for mock but good for consistency)
+		Name:          "TimeoutTarget",
+		Address:       "timeout.com",
+		ProbeType:     "http",
+		ProbeInterval: 0.1,  // 100ms
+		Timeout:       0.05, // 50ms (irrelevant for mock but good for consistency)
 	}
 
 	id, _ := mockDB.AddTarget(&target)

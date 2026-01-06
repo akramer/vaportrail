@@ -112,9 +112,6 @@ func (s *Server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	if t.ProbeInterval <= 0 {
 		t.ProbeInterval = 1.0
 	}
-	if t.CommitInterval <= 0 {
-		t.CommitInterval = 60.0
-	}
 	if t.Timeout <= 0 {
 		t.Timeout = 5.0
 	}
@@ -197,9 +194,6 @@ func (s *Server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	if t.ProbeInterval == 0 {
 		t.ProbeInterval = 1.0
-	}
-	if t.CommitInterval == 0 {
-		t.CommitInterval = 60.0
 	}
 	if t.Timeout == 0 {
 		t.Timeout = 5.0

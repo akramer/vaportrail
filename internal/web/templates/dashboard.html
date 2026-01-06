@@ -49,10 +49,7 @@
             <label>Probe Interval (s):</label><br>
             <input type="number" name="interval" id="probe-interval" value="1.0" min="0.1" step="0.1">
         </div>
-        <div class="form-group">
-            <label for="commit-interval">Commit Interval (s):</label>
-            <input type="number" id="commit-interval" name="commit_interval" step="1.0" value="60.0">
-        </div>
+
         <div class="form-group">
             <label for="timeout">Timeout (s):</label>
             <input type="number" id="timeout" name="timeout" step="any" value="5.0">
@@ -127,7 +124,6 @@
         const address = document.getElementById('address').value;
         const probeType = document.getElementById('probe-type').value;
         const probeInterval = parseFloat(document.getElementById('probe-interval').value);
-        const commitInterval = parseFloat(document.getElementById('commit-interval').value);
         const timeout = parseFloat(document.getElementById('timeout').value);
 
         const payload = {
@@ -135,7 +131,6 @@
             Address: address,
             ProbeType: probeType,
             ProbeInterval: probeInterval,
-            CommitInterval: commitInterval,
             Timeout: timeout
         };
 
@@ -173,7 +168,7 @@
                 <div class="target-card">
                     <h3>${t.Name} (${t.ProbeType})</h3>
                     <p>Address: ${t.Address}</p>
-                    <p>Interval: ${t.ProbeInterval}s / Commit: ${t.CommitInterval}s / Timeout: ${t.Timeout || 5}s</p>
+                    <p>Interval: ${t.ProbeInterval}s / Timeout: ${t.Timeout || 5}s</p>
                     <button onclick="window.location.href='/graph/${t.ID}'">View Details</button>
                     <button onclick="editTarget(${t.ID})">Edit</button>
                     <button style="background-color: #ff4444;" onclick="deleteTarget(${t.ID})">Delete</button>
@@ -198,7 +193,6 @@
         document.getElementById('address').value = t.Address;
         document.getElementById('probe-type').value = t.ProbeType;
         document.getElementById('probe-interval').value = t.ProbeInterval;
-        document.getElementById('commit-interval').value = t.CommitInterval;
         document.getElementById('timeout').value = t.Timeout || 5.0;
 
         document.getElementById('add-target-modal').style.display = 'block';
@@ -208,7 +202,6 @@
         document.getElementById('modal-title').innerText = 'Add Target';
         document.getElementById('target-id').value = '';
         document.getElementById('target-form').reset();
-        document.getElementById('commit-interval').value = 60.0;
         document.getElementById('timeout').value = 5.0;
         document.getElementById('add-target-modal').style.display = 'block';
     }

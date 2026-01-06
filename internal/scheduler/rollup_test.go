@@ -20,7 +20,6 @@ func TestRollupManager(t *testing.T) {
 		Address:           "start.pcom",
 		ProbeType:         "http",
 		ProbeInterval:     1.0,
-		CommitInterval:    1.0,
 		Timeout:           1.0,
 		RetentionPolicies: `[{"window": 60, "retention": 3600}]`, // 1m rollup, 1h retention
 	}
