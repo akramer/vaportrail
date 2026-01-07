@@ -1,19 +1,35 @@
 <h1>Graph - {{target_name}}</h1>
 
-<div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+<div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
     <a href="/">← Back to Dashboard</a>
 
-    <span style="margin-left: 20px;">Start:</span>
+    <span style="margin-left: 20px;">Presets:</span>
+    <button onclick="setRange('1h')">Last 1h</button>
+    <button onclick="setRange('24h')">Last 24h</button>
+    <button onclick="setRange('7d')">Last 7d</button>
+    <button onclick="setRange('30d')">Last 30d</button>
+
+    <span style="margin-left: 20px;">Move:</span>
+    <button onclick="moveTime(-60)">-1h</button>
+    <button onclick="moveTime(-5)">-5m</button>
+    <button onclick="moveTime(5)">+5m</button>
+    <button onclick="moveTime(60)">+1h</button>
+
+    <span style="margin-left: 20px;">Range:</span>
     <input type="datetime-local" id="start-time">
-
-    <span>End:</span>
+    <span>to</span>
     <input type="datetime-local" id="end-time">
+    <button onclick="updateTimeRange()">Go</button>
 
-    <button onclick="updateTimeRange()">Update</button>
-    <button onclick="setRange('1h')">1h</button>
-    <button onclick="setRange('24h')">24h</button>
-    <button onclick="setRange('7d')">7d</button>
-    <button onclick="setRange('30d')">30d</button>
+    <span style="margin-left: 20px;">Graph Mode:</span>
+    <select id="graph-mode" onchange="changeGraphMode(this.value)">
+        <option value="heatmap">Heatmap</option>
+        <option value="line">Line Chart</option>
+    </select>
+    <span style="margin-left: 20px;">
+        <input type="checkbox" id="show-raw" onchange="updateTimeRange()">
+        <label for="show-raw">Show Raw Timings</label>
+    </span>
 </div>
 
 <div class="chart-container" style="height: 500px;">
@@ -22,20 +38,26 @@
 
 <script>
     const targetId = {{target_id}};
+    let currentGraphMode = 'heatmap';
+    let chartInstance = null;
 
-    function initTimeInputs() {
-        const end = new Date();
-        const start = new Date(end.getTime() - 60 * 60 * 1000);
-        setTimeInputs(start, end);
+    function toLocalISO(d) {
+        const offset = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - offset).toISOString().slice(0, 16);
     }
 
     function setTimeInputs(start, end) {
-        const toLocalISO = (d) => {
-            const offset = d.getTimezoneOffset() * 60000;
-            return new Date(d.getTime() - offset).toISOString().slice(0, 16);
-        };
         document.getElementById('start-time').value = toLocalISO(start);
         document.getElementById('end-time').value = toLocalISO(end);
+    }
+
+    function getTimeRange() {
+        const startVal = document.getElementById('start-time').value;
+        const endVal = document.getElementById('end-time').value;
+        if (startVal && endVal) {
+            return { start: new Date(startVal), end: new Date(endVal) };
+        }
+        return null;
     }
 
     function setRange(range) {
@@ -52,85 +74,334 @@
         updateTimeRange();
     }
 
-    function getTimeRange() {
-        const startVal = document.getElementById('start-time').value;
-        const endVal = document.getElementById('end-time').value;
-        if (startVal && endVal) {
-            return { start: new Date(startVal), end: new Date(endVal) };
-        }
-        return null;
+    function moveTime(minutes) {
+        const range = getTimeRange();
+        if (!range) return;
+        const diff = minutes * 60 * 1000;
+        const newStart = new Date(range.start.getTime() + diff);
+        const newEnd = new Date(range.end.getTime() + diff);
+        setTimeInputs(newStart, newEnd);
+        updateTimeRange();
+    }
+
+    function changeGraphMode(mode) {
+        currentGraphMode = mode;
+        updateTimeRange();
     }
 
     async function updateTimeRange() {
         const range = getTimeRange();
         if (!range) return;
 
-        const url = '/api/results?target_id=' + targetId + '&start=' + range.start.toISOString() + '&end=' + range.end.toISOString() + '&include_raw=true';
+        // 1. Fetch Aggregated Data (Always)
+        let url = '/api/results?target_id=' + targetId + '&start=' + range.start.toISOString() + '&end=' + range.end.toISOString();
         const res = await fetch(url);
         const response = await res.json();
         const data = response.results || [];
-        const rawData = response.raw || [];
 
-        const ctx = document.getElementById('main-chart');
-        const existingChart = Chart.getChart('main-chart');
-        if (existingChart) existingChart.destroy();
+        let rawData = [];
+        const showRaw = document.getElementById('show-raw').checked;
 
-        const labels = data.map(d => d.time);
-        const p50Data = data.map(d => d.p50 / 1000000);
-        const p99Data = data.map(d => d.p99 / 1000000);
-        const p1Data = data.map(d => d.p1 / 1000000);
-
-        const datasets = [
-            { label: 'P99 (ms)', data: p99Data, borderColor: '#FF0000', backgroundColor: '#FF0000', fill: false, pointRadius: 0 },
-            { label: 'P50 (ms)', data: p50Data, borderColor: '#00FF00', backgroundColor: '#00FF00', fill: false, pointRadius: 0 },
-            { label: 'P1 (ms)', data: p1Data, borderColor: '#0000FF', backgroundColor: '#0000FF', fill: false, pointRadius: 0 }
-        ];
-
-        // Add raw data as scatter points if available
-        if (rawData.length > 0) {
-            const rawPoints = rawData
-                .filter(r => r.latency > 0)
-                .map(r => ({ x: r.time, y: r.latency / 1000000 }));
-            datasets.push({
-                label: 'Raw',
-                data: rawPoints,
-                type: 'scatter',
-                borderColor: 'rgba(0,0,0,0.3)',
-                backgroundColor: 'rgba(0,0,0,0.3)',
-                pointRadius: 2
-            });
+        // 2. Fetch Raw Data (If checked)
+        if (showRaw) {
+            const rawUrl = url + '&include_raw=true';
+            const rawRes = await fetch(rawUrl);
+            if (!rawRes.ok) {
+                if (rawRes.status === 400) {
+                    const msg = await rawRes.text();
+                    alert(msg);
+                    document.getElementById('show-raw').checked = false;
+                } else {
+                    console.error("Failed to load raw data", rawRes);
+                }
+            } else {
+                const rawResponse = await rawRes.json();
+                rawData = rawResponse.raw || [];
+            }
         }
 
-        new Chart(ctx.getContext('2d'), {
-            type: 'line',
-            data: { labels: labels, datasets: datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                scales: {
-                    x: { type: 'timeseries', time: { unit: 'minute' } },
-                    y: { type: 'linear', title: { display: true, text: 'Latency (ms)' }, beginAtZero: true }
+        const ctx = document.getElementById('main-chart');
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        const chartCtx = ctx.getContext('2d');
+
+        if (currentGraphMode === 'heatmap') {
+            // Map bar data to objects with x and y
+            const barData = data.map(d => {
+                const timeMs = new Date(d.time).getTime();
+                const windowMs = (d.window_seconds || 60) * 1000;
+                return {
+                    x: timeMs + windowMs / 2,
+                    y: [
+                        (d.p1 !== undefined && d.p1 !== 0 ? d.p1 : (d.p0 !== undefined && d.p0 !== 0 ? d.p0 : d.min_ns)) / 1000000,
+                        (d.p99 !== undefined && d.p99 !== 0 ? d.p99 : (d.p100 !== undefined && d.p100 !== 0 ? d.p100 : d.max_ns)) / 1000000
+                    ],
+                    originalTime: d.time
+                };
+            });
+
+            const dataset = {
+                label: 'Latency Range',
+                data: barData,
+                backgroundColor: function (context) {
+                    const chart = context.chart;
+                    const { ctx, chartArea, scales } = chart;
+                    if (!chartArea) return null;
+
+                    const index = context.dataIndex;
+                    const d = data[index];
+                    if (!d || d.probe_count === 0) return 'rgba(0,0,0,0)';
+
+                    // Rust API returns 101 percentiles (0-100%), sample every 5th for 21 values
+                    if (d.percentiles && d.percentiles.length >= 21) {
+                        // Sample 21 values: indices 0, 5, 10, ... 100 from 101 percentiles
+                        const pValues = [];
+                        for (let i = 0; i <= 100; i += 5) {
+                            pValues.push((d.percentiles[i] || 0) / 1000000);
+                        }
+                        const topY = scales.y.getPixelForValue((d.p99 || pValues[19]) / 1000000);
+                        const bottomY = scales.y.getPixelForValue((d.p1 || pValues[0]) / 1000000);
+
+                        if (Math.abs(topY - bottomY) < 0.1) return 'rgba(0,0,0,1)';
+
+                        const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
+
+                        let stops = [];
+                        for (let i = 0; i <= 20; i++) {
+                            const val = pValues[i];
+                            const y = scales.y.getPixelForValue(val);
+                            let stop = (y - topY) / (bottomY - topY);
+                            stop = Math.max(0, Math.min(1, stop));
+
+                            const dist = Math.abs(i - 10);
+                            const brightness = Math.floor((dist / 10) * 200);
+                            stops.push({ stop, brightness });
+                        }
+
+                        stops.sort((a, b) => a.stop - b.stop);
+
+                        let uniqueStops = [];
+                        if (stops.length > 0) {
+                            let current = stops[0];
+                            for (let i = 1; i < stops.length; i++) {
+                                const next = stops[i];
+                                if (Math.abs(next.stop - current.stop) < 1e-5) {
+                                    if (next.brightness < current.brightness) {
+                                        current.brightness = next.brightness;
+                                    }
+                                } else {
+                                    uniqueStops.push(current);
+                                    current = next;
+                                }
+                            }
+                            uniqueStops.push(current);
+                        }
+
+                        uniqueStops.forEach(s => {
+                            gradient.addColorStop(s.stop, `rgba(${s.brightness}, ${s.brightness}, ${s.brightness}, 1)`);
+                        });
+                        return gradient;
+                    }
+                    return 'black';
                 },
-                plugins: {
-                    zoom: {
+                borderWidth: 0,
+                barPercentage: 1.0,
+                categoryPercentage: 1.0,
+                xAxisID: 'x',
+                grouped: false,
+                order: 10
+            };
+
+            const backgroundPlugin = {
+                id: 'customCanvasBackgroundColor',
+                beforeDraw: (chart) => {
+                    const { ctx, chartArea, scales } = chart;
+                    ctx.save();
+                    data.forEach((d, i) => {
+                        const total = d.probe_count + d.timeout_count;
+                        if (total === 0) return;
+                        const timeoutPct = d.timeout_count / total;
+
+                        const meta = chart.getDatasetMeta(0);
+                        const bar = meta.data[i];
+                        if (bar) {
+                            const width = bar.width;
+                            const x = bar.x - width / 2;
+                            const gb = Math.floor(255 * (1 - timeoutPct));
+                            ctx.fillStyle = `rgb(255, ${gb}, ${gb})`;
+                            ctx.fillRect(x, chartArea.top, width, chartArea.bottom - chartArea.top);
+                        }
+                    });
+                    ctx.restore();
+                }
+            };
+
+            let datasets = [dataset];
+            if (rawData.length > 0) {
+                const scatterData = rawData
+                    .filter(r => r.latency > 0)
+                    .map(r => ({ x: r.time, y: r.latency / 1000000 }));
+                datasets.push({
+                    label: 'Raw Latency (ms)',
+                    data: scatterData,
+                    type: 'scatter',
+                    backgroundColor: '#00ffff',
+                    borderColor: '#00ffff',
+                    borderWidth: 2,
+                    pointRadius: 2,
+                    xAxisID: 'xRaw',
+                    grouped: false,
+                    order: 1
+                });
+            }
+
+            chartInstance = new Chart(chartCtx, {
+                type: 'bar',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } },
+                            grid: { display: false },
+                            min: range.start.toISOString(),
+                            max: range.end.toISOString(),
+                            offset: false
+                        },
+                        xRaw: {
+                            type: 'time',
+                            display: false,
+                            min: range.start.toISOString(),
+                            max: range.end.toISOString(),
+                            offset: false
+                        },
+                        y: { type: 'linear', display: true, title: { display: true, text: 'Latency (ms)' } }
+                    },
+                    plugins: {
                         zoom: {
-                            drag: { enabled: true },
-                            mode: 'x',
-                            onZoomComplete: function ({ chart }) {
-                                const { min, max } = chart.scales.x;
-                                setTimeInputs(new Date(min), new Date(max));
-                                updateTimeRange();
+                            zoom: {
+                                drag: { enabled: true },
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setTimeInputs(new Date(min), new Date(max));
+                                    updateTimeRange();
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function (context) {
+                                    const item = context[0];
+                                    if (item.raw && item.raw.originalTime) {
+                                        return new Date(item.raw.originalTime).toLocaleString();
+                                    }
+                                    return item.label;
+                                },
+                                label: function (context) {
+                                    if (context.dataset.type === 'scatter') {
+                                        return `Raw: ${context.parsed.y.toFixed(2)} ms`;
+                                    }
+                                    const i = context.dataIndex;
+                                    const d = data[i];
+                                    if (!d) return '';
+
+                                    return [
+                                        `Max: ${(d.p100 / 1e6).toFixed(2)} ms`,
+                                        `Median: ${(d.p50 / 1e6).toFixed(2)} ms`,
+                                        `Min: ${(d.p0 / 1e6).toFixed(2)} ms`,
+                                        `Success: ${d.probe_count}`,
+                                        `Timeout: ${d.timeout_count}`
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: [backgroundPlugin]
+            });
+
+        } else {
+            // Line chart mode
+            const p0Data = data.map(d => ({ x: d.time, y: (d.p0 || d.min_ns) / 1000000 }));
+            const p50Data = data.map(d => ({ x: d.time, y: (d.p50) / 1000000 }));
+            const p100Data = data.map(d => ({ x: d.time, y: (d.p100 || d.max_ns) / 1000000 }));
+            const timeoutPercentageData = data.map(d => {
+                const total = d.probe_count + d.timeout_count;
+                return { x: d.time, y: total > 0 ? (d.timeout_count / total) * 100 : 0 };
+            });
+
+            let datasets = [
+                {
+                    label: 'Timeout %',
+                    data: timeoutPercentageData,
+                    type: 'bar',
+                    backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1,
+                    yAxisID: 'y1',
+                    barPercentage: 0.5
+                },
+                { label: 'Max (P100)', data: p100Data, borderColor: '#FF0000', backgroundColor: '#FF0000', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' },
+                { label: 'Median (P50)', data: p50Data, borderColor: '#00FF00', backgroundColor: '#00FF00', fill: false, tension: 0.1, borderWidth: 2, yAxisID: 'y' },
+                { label: 'Min (P0)', data: p0Data, borderColor: '#4B0082', backgroundColor: '#4B0082', fill: false, tension: 0.1, borderWidth: 1, yAxisID: 'y' }
+            ];
+
+            if (rawData.length > 0) {
+                const scatterData = rawData
+                    .filter(r => r.latency > 0)
+                    .map(r => ({ x: r.time, y: r.latency / 1000000 }));
+                datasets.push({
+                    label: 'Raw Latency (ms)',
+                    data: scatterData,
+                    type: 'scatter',
+                    backgroundColor: 'black',
+                    borderColor: 'black',
+                    borderWidth: 2,
+                    pointRadius: 2,
+                    yAxisID: 'y'
+                });
+            }
+
+            chartInstance = new Chart(chartCtx, {
+                type: 'line',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
+                        y: { type: 'linear', display: true, position: 'left', beginAtZero: true },
+                        y1: { type: 'linear', display: true, position: 'right', beginAtZero: true, min: 0, max: 100, grid: { drawOnChartArea: false } }
+                    },
+                    plugins: {
+                        zoom: {
+                            zoom: {
+                                drag: { enabled: true },
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setTimeInputs(new Date(min), new Date(max));
+                                    updateTimeRange();
+                                }
                             }
                         }
                     }
                 }
-            }
-        });
+            });
+        }
     }
 
     window.addEventListener('load', () => {
-        initTimeInputs();
+        const end = new Date();
+        const start = new Date(end.getTime() - 60 * 60 * 1000);
+        setTimeInputs(start, end);
         updateTimeRange();
     });
 </script>
