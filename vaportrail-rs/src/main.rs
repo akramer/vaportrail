@@ -22,7 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive("vaportrail=info".parse()?))
+            .add_directive("vaportrail=info".parse()?)
+            .add_directive("tower_http=debug".parse()?))
         .init();
 
     // Load configuration

@@ -16,6 +16,7 @@ use axum::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
 
 /// Application state shared across handlers.
 #[derive(Clone)]
@@ -62,6 +63,7 @@ impl Server {
             .route("/favicon.ico", get(handlers::handle_favicon))
             .layer(cors)
             .layer(DefaultBodyLimit::max(1024 * 1024)) // 1MB
+            .layer(TraceLayer::new_for_http())
             .with_state(self.state.clone())
     }
 
