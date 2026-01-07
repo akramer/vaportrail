@@ -1,0 +1,536 @@
+<div style="display: flex; justify-content: space-between; align-items: center;">
+    <h1>Dashboard</h1>
+</div>
+<div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+    <button onclick="showAddTarget()">Add Target</button>
+
+    <span>Graph Mode: </span>
+    <select id="graph-mode" onchange="changeGraphMode(this.value)">
+        <option value="heatmap">Heatmap</option>
+        <option value="line">Line Chart</option>
+    </select>
+
+    <span style="margin-left: 20px;">Start:</span>
+    <input type="datetime-local" id="start-time">
+
+    <span>End:</span>
+    <input type="datetime-local" id="end-time">
+
+    <button onclick="updateTimeRange()">Update</button>
+    <button onclick="resetTimeRange()">Reset (Last 1h)</button>
+</div>
+<div id="targets">Loading...</div>
+
+<div id="add-target-modal"
+    style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:20px; border:1px solid black; z-index:1000;">
+    <h2 id="modal-title">Add Target</h2>
+    <form id="target-form" onsubmit="submitTarget(event)">
+        <input type="hidden" name="id" id="target-id">
+        <div>
+            <label>Name:</label><br>
+            <input type="text" name="name" id="name" required>
+        </div>
+        <div>
+            <label>Address:</label><br>
+            <input type="text" name="address" id="address" required>
+        </div>
+        <div>
+            <label>Probe Type:</label><br>
+            <select name="type" id="probe-type">
+                <option value="ping">Ping</option>
+                <option value="http">HTTP</option>
+                <option value="dns">DNS</option>
+            </select>
+        </div>
+        <div>
+            <label>Probe Interval (s):</label><br>
+            <input type="number" name="interval" id="probe-interval" value="1.0" min="0.1" step="0.1">
+        </div>
+
+        <div class="form-group">
+            <label for="timeout">Timeout (s):</label>
+            <input type="number" id="timeout" name="timeout" step="any" value="5.0">
+        </div>
+
+        <details id="retention-config-section">
+            <summary style="cursor: pointer; font-weight: bold; margin-bottom: 10px;">Retention & Rollup Configuration
+            </summary>
+            <div style="padding: 10px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                <table id="retention-tiers-table" style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="text-align: left; padding: 5px;">Window (seconds)</th>
+                            <th style="text-align: left; padding: 5px;">Retention</th>
+                            <th style="text-align: left; padding: 5px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="retention-tiers-body">
+                    </tbody>
+                </table>
+                <button type="button" onclick="addRetentionTier()" style="margin-top: 10px;">+ Add Tier</button>
+            </div>
+        </details>
+
+        <button type="submit">Save</button>
+        <button type="button" onclick="document.getElementById('add-target-modal').style.display='none'">Cancel</button>
+    </form>
+</div>
+
+<script>
+    let currentTargets = [];
+    let currentGraphMode = 'heatmap';
+
+    const defaultPolicies = [
+        { window: 0, retention: 604800 },
+        { window: 60, retention: 15768000 },
+        { window: 300, retention: 31536000 },
+        { window: 3600, retention: 315360000 },
+        { window: 86400, retention: 3153600000 }
+    ];
+
+    function formatSeconds(seconds) {
+        if (seconds === 0) return 'Raw';
+        if (seconds < 60) return seconds + 's';
+        if (seconds < 3600) return (seconds / 60) + 'm';
+        if (seconds < 86400) return (seconds / 3600) + 'h';
+        return (seconds / 86400) + 'd';
+    }
+
+    function createRetentionSelect(currentValue) {
+        const presets = [
+            { value: 86400, label: '1 day' },
+            { value: 604800, label: '1 week' },
+            { value: 2592000, label: '1 month' },
+            { value: 15768000, label: '6 months' },
+            { value: 31536000, label: '1 year' },
+            { value: 315360000, label: '10 years' },
+            { value: 3153600000, label: '100 years' }
+        ];
+
+        let html = '<select class="retention-select" onchange="handleRetentionSelectChange(this)">';
+        let found = false;
+        for (const p of presets) {
+            const selected = p.value === currentValue ? ' selected' : '';
+            if (p.value === currentValue) found = true;
+            html += `<option value="${p.value}"${selected}>${p.label}</option>`;
+        }
+        html += `<option value="custom"${!found ? ' selected' : ''}>Custom...</option>`;
+        html += '</select>';
+        html += `<input type="number" class="retention-custom" value="${!found ? currentValue : ''}" style="width: 80px; display: ${!found ? 'inline-block' : 'none'};" placeholder="seconds" min="1">`;
+        return html;
+    }
+
+    function createWindowInput(windowValue, isRaw) {
+        if (isRaw) {
+            return '<span>0 (Raw)</span><input type="hidden" class="window-input" value="0">';
+        }
+        return `<input type="number" class="window-input" value="${windowValue}" min="1" style="width: 80px;">`;
+    }
+
+    function addRetentionTierRow(window, retention) {
+        const tbody = document.getElementById('retention-tiers-body');
+        const isRaw = window === 0;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td style="padding: 5px;">${createWindowInput(window, isRaw)}</td>
+            <td style="padding: 5px;">${createRetentionSelect(retention)}</td>
+            <td style="padding: 5px;">
+                ${!isRaw ? '<button type="button" onclick="removeRetentionTier(this)" style="background: #ff4444; color: white; border: none; padding: 2px 8px; cursor: pointer;">×</button>' : ''}
+            </td>
+        `;
+        tbody.appendChild(row);
+    }
+
+    function addRetentionTier() {
+        addRetentionTierRow(600, 31536000);
+    }
+
+    function removeRetentionTier(btn) {
+        const row = btn.closest('tr');
+        row.remove();
+    }
+
+    function handleRetentionSelectChange(select) {
+        const customInput = select.nextElementSibling;
+        if (select.value === 'custom') {
+            customInput.style.display = 'inline-block';
+            customInput.focus();
+        } else {
+            customInput.style.display = 'none';
+        }
+    }
+
+    function buildRetentionPoliciesJSON() {
+        const rows = document.querySelectorAll('#retention-tiers-body tr');
+        const policies = [];
+        rows.forEach(row => {
+            const windowInput = row.querySelector('.window-input');
+            const retentionSelect = row.querySelector('.retention-select');
+            const retentionCustom = row.querySelector('.retention-custom');
+
+            const windowVal = parseInt(windowInput.value) || 0;
+            let retentionVal;
+            if (retentionSelect.value === 'custom') {
+                retentionVal = parseInt(retentionCustom.value) || 604800;
+            } else {
+                retentionVal = parseInt(retentionSelect.value);
+            }
+
+            policies.push({ window: windowVal, retention: retentionVal });
+        });
+
+        policies.sort((a, b) => a.window - b.window);
+        return policies;
+    }
+
+    function populateRetentionForm(policiesJSON) {
+        const tbody = document.getElementById('retention-tiers-body');
+        tbody.innerHTML = '';
+
+        let policies = [];
+        try {
+            policies = JSON.parse(policiesJSON || '[]');
+        } catch (e) {
+            policies = [];
+        }
+
+        if (policies.length === 0) {
+            policies = defaultPolicies;
+        }
+
+        policies.sort((a, b) => a.window - b.window);
+        policies.forEach(p => {
+            addRetentionTierRow(p.window, p.retention);
+        });
+    }
+
+    function resetRetentionForm() {
+        populateRetentionForm(JSON.stringify(defaultPolicies));
+    }
+
+    function initTimeInputs() {
+        const end = new Date();
+        const start = new Date(end.getTime() - 60 * 60 * 1000);
+        setTimeInputs(start, end);
+    }
+
+    function setTimeInputs(start, end) {
+        const toLocalISO = (d) => {
+            const offset = d.getTimezoneOffset() * 60000;
+            return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+        };
+        document.getElementById('start-time').value = toLocalISO(start);
+        document.getElementById('end-time').value = toLocalISO(end);
+    }
+
+    function getTimeRange() {
+        const startVal = document.getElementById('start-time').value;
+        const endVal = document.getElementById('end-time').value;
+
+        if (startVal && endVal) {
+            return { start: new Date(startVal), end: new Date(endVal) };
+        }
+        return null;
+    }
+
+    function updateTimeRange() {
+        for (const t of currentTargets) {
+            loadChart(t.id, 'chart-' + t.id);
+        }
+    }
+
+    function resetTimeRange() {
+        initTimeInputs();
+        updateTimeRange();
+    }
+
+    window.addEventListener('load', initTimeInputs);
+
+    function changeGraphMode(mode) {
+        currentGraphMode = mode;
+        for (const t of currentTargets) {
+            const chartInstance = Chart.getChart('chart-' + t.id);
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+            loadChart(t.id, 'chart-' + t.id);
+        }
+    }
+
+    async function submitTarget(e) {
+        e.preventDefault();
+        const id = document.getElementById('target-id').value;
+        const name = document.getElementById('name').value;
+        const address = document.getElementById('address').value;
+        const probeType = document.getElementById('probe-type').value;
+        const probeInterval = parseFloat(document.getElementById('probe-interval').value);
+        const timeout = parseFloat(document.getElementById('timeout').value);
+
+        const payload = {
+            name: name,
+            address: address,
+            probe_type: probeType,
+            probe_interval: probeInterval,
+            timeout: timeout,
+            retention_policies: buildRetentionPoliciesJSON()
+        };
+
+        let res;
+        if (id) {
+            res = await fetch('/api/targets/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            res = await fetch('/api/targets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        }
+
+        if (res.ok) {
+            document.getElementById('add-target-modal').style.display = 'none';
+            loadTargets();
+            e.target.reset();
+        } else {
+            alert("Failed to save target");
+        }
+    }
+
+    async function loadTargets() {
+        const res = await fetch('/api/targets');
+        let targets = await res.json();
+        if (!targets) targets = [];
+        currentTargets = targets;
+        const targetsDiv = document.getElementById('targets');
+        targetsDiv.innerHTML = targets.map(t => `
+                <div class="target-card">
+                    <h3>${t.name} (${t.probe_type})</h3>
+                    <p>Address: ${t.address}</p>
+                    <p>Interval: ${t.probe_interval}s / Timeout: ${t.timeout || 5}s</p>
+                    <button onclick="window.location.href='/graph?id=${t.id}'">View Details</button>
+                    <button onclick="editTarget(${t.id})">Edit</button>
+                    <button style="background-color: #ff4444;" onclick="deleteTarget(${t.id})">Delete</button>
+                    <div class="chart-container">
+                        <canvas id="chart-${t.id}"></canvas>
+                    </div>
+                </div>
+            `).join('');
+
+        for (const t of targets) {
+            loadChart(t.id, 'chart-' + t.id);
+        }
+    }
+
+    function editTarget(id) {
+        const t = currentTargets.find(t => t.id === id);
+        if (!t) return;
+
+        document.getElementById('modal-title').innerText = 'Edit Target';
+        document.getElementById('target-id').value = t.id;
+        document.getElementById('name').value = t.name;
+        document.getElementById('address').value = t.address;
+        document.getElementById('probe-type').value = t.probe_type;
+        document.getElementById('probe-interval').value = t.probe_interval;
+        document.getElementById('timeout').value = t.timeout || 5.0;
+        populateRetentionForm(t.retention_policies);
+
+        document.getElementById('add-target-modal').style.display = 'block';
+    }
+
+    function showAddTarget() {
+        document.getElementById('modal-title').innerText = 'Add Target';
+        document.getElementById('target-id').value = '';
+        document.getElementById('target-form').reset();
+        document.getElementById('timeout').value = 5.0;
+        resetRetentionForm();
+        document.getElementById('add-target-modal').style.display = 'block';
+    }
+
+    async function deleteTarget(id) {
+        if (!confirm("Are you sure you want to delete this target?")) return;
+        const res = await fetch('/api/targets/' + id, { method: 'DELETE' });
+        if (res.ok) {
+            loadTargets();
+        } else {
+            alert("Failed to delete target");
+        }
+    }
+
+    async function loadChart(id, canvasId) {
+        let start, end;
+        const userRange = getTimeRange();
+
+        if (userRange) {
+            start = userRange.start;
+            end = userRange.end;
+        } else {
+            end = new Date();
+            start = new Date(end.getTime() - 60 * 60 * 1000);
+        }
+
+        const url = '/api/results?target_id=' + id + '&start=' + start.toISOString() + '&end=' + end.toISOString();
+        const res = await fetch(url);
+        const response = await res.json();
+        const data = response.results || [];
+
+        if (!data || data.length === 0) return;
+
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+
+        const existingChart = Chart.getChart(canvasId);
+        if (existingChart) existingChart.destroy();
+
+        const chartCtx = ctx.getContext('2d');
+        const labels = data.map(d => d.time);
+
+        if (currentGraphMode === 'heatmap') {
+            // Heatmap mode with gradient bars
+            const barData = data.map(d => {
+                if (d.probe_count === 0) return null;
+                let minVal = d.p1 !== 0 ? d.p1 : d.min_ns;
+                let maxVal = d.p99 !== 0 ? d.p99 : d.max_ns;
+                return [minVal / 1000000, maxVal / 1000000];
+            });
+
+            const dataset = {
+                label: 'Latency Range',
+                data: barData,
+                backgroundColor: function (context) {
+                    const chart = context.chart;
+                    const { ctx, chartArea, scales } = chart;
+                    if (!chartArea) return 'rgba(100, 100, 100, 0.8)';
+
+                    const index = context.dataIndex;
+                    const d = data[index];
+                    if (!d || d.probe_count === 0) return 'rgba(0,0,0,0)';
+
+                    // Get bar boundaries
+                    const p1Val = (d.p1 !== 0 ? d.p1 : d.min_ns) / 1000000;
+                    const p50Val = d.p50 / 1000000;
+                    const p99Val = (d.p99 !== 0 ? d.p99 : d.max_ns) / 1000000;
+
+                    const topY = scales.y.getPixelForValue(p99Val);
+                    const bottomY = scales.y.getPixelForValue(p1Val);
+                    const midY = scales.y.getPixelForValue(p50Val);
+
+                    // Check for zero height
+                    if (Math.abs(topY - bottomY) < 1) return 'rgba(50, 50, 50, 1)';
+
+                    const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
+
+                    // Calculate stop positions
+                    let midStop = (midY - topY) / (bottomY - topY);
+                    midStop = Math.max(0, Math.min(1, midStop));
+                    if (isNaN(midStop)) midStop = 0.5;
+
+                    // Gradient: light at edges, dark at median
+                    gradient.addColorStop(0, 'rgba(180, 180, 180, 1)');       // Top (max)
+                    gradient.addColorStop(midStop, 'rgba(20, 20, 20, 1)');    // Median (darkest)
+                    gradient.addColorStop(1, 'rgba(180, 180, 180, 1)');       // Bottom (min)
+
+                    return gradient;
+                },
+                borderWidth: 0,
+                barPercentage: 1.0,
+                categoryPercentage: 1.0
+            };
+
+            // Background plugin to show timeouts as red
+            const backgroundPlugin = {
+                id: 'customCanvasBackgroundColor',
+                beforeDraw: (chart) => {
+                    const { ctx, chartArea } = chart;
+                    const meta = chart.getDatasetMeta(0);
+
+                    ctx.save();
+                    data.forEach((d, i) => {
+                        const total = d.probe_count + d.timeout_count;
+                        if (total === 0) return;
+                        const timeoutPct = d.timeout_count / total;
+
+                        const bar = meta.data[i];
+                        if (bar && bar.width) {
+                            const x = bar.x - bar.width / 2;
+                            const gb = Math.floor(255 * (1 - timeoutPct));
+                            ctx.fillStyle = `rgb(255, ${gb}, ${gb})`;
+                            ctx.fillRect(x, chartArea.top, bar.width, chartArea.bottom - chartArea.top);
+                        }
+                    });
+                    ctx.restore();
+                }
+            };
+
+            new Chart(chartCtx, {
+                type: 'bar',
+                data: { labels: labels, datasets: [dataset] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'timeseries', time: { unit: 'minute' }, grid: { display: false } },
+                        y: { type: 'linear', title: { display: true, text: 'Latency (ms)' } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    const d = data[context.dataIndex];
+                                    if (!d) return '';
+                                    return [
+                                        `P99: ${(d.p99 / 1000000).toFixed(2)} ms`,
+                                        `P50: ${(d.p50 / 1000000).toFixed(2)} ms`,
+                                        `P1: ${(d.p1 / 1000000).toFixed(2)} ms`,
+                                        `Probes: ${d.probe_count}`,
+                                        `Timeouts: ${d.timeout_count}`
+                                    ];
+                                }
+                            }
+                        },
+                        zoom: {
+                            zoom: {
+                                drag: { enabled: true },
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setTimeInputs(new Date(min), new Date(max));
+                                    updateTimeRange();
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: [backgroundPlugin]
+            });
+        } else {
+            // Line chart mode
+            const p50Data = data.map(d => d.p50 / 1000000);
+            const p99Data = data.map(d => d.p99 / 1000000);
+
+            new Chart(chartCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'P99 (ms)', data: p99Data, borderColor: '#FF0000', fill: false, pointRadius: 0 },
+                        { label: 'P50 (ms)', data: p50Data, borderColor: '#00FF00', fill: false, pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'timeseries', time: { unit: 'minute' } },
+                        y: { type: 'linear', title: { display: true, text: 'Latency (ms)' } }
+                    }
+                }
+            });
+        }
+    }
+
+    loadTargets();
+</script>

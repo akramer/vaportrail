@@ -1,0 +1,63 @@
+<h1>VaporTrail Status</h1>
+
+<div class="card mb-4">
+    <div class="card-header">Database Statistics</div>
+    <div class="card-body">
+        <table class="table">
+            <tr>
+                <th>Database Size</th>
+                <td>{{db_size}}</td>
+            </tr>
+            <tr>
+                <th>Page Count</th>
+                <td>{{page_count}}</td>
+            </tr>
+            <tr>
+                <th>Page Size</th>
+                <td>{{page_size}} bytes</td>
+            </tr>
+            <tr>
+                <th>Freelist Count</th>
+                <td>{{freelist_count}}</td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">Raw Data Statistics</div>
+    <div class="card-body">
+        <table class="table">
+            <tr>
+                <th>Total Records</th>
+                <td>{{raw_count}}</td>
+            </tr>
+            <tr>
+                <th>Estimated Size</th>
+                <td>{{raw_size}}</td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">TDigest Storage by Target/Window</div>
+    <div class="card-body">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Target</th>
+                    <th>Window</th>
+                    <th>Total Size</th>
+                    <th>Count</th>
+                    <th>Avg Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{tdigest_rows}}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<p class="mt-4"><a href="/">← Back to Dashboard</a></p>
