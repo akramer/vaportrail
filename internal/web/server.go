@@ -23,6 +23,9 @@ import (
 //go:embed templates/*.html
 var templatesJS embed.FS
 
+//go:embed static/*
+var staticFS embed.FS
+
 type Server struct {
 	cfg       *config.ServerConfig
 	db        *db.DB
@@ -75,6 +78,7 @@ func (s *Server) routes() {
 	s.router.Get("/api/results/{id}", s.handleGetResults)
 	s.router.Get("/graph/{id}", s.handleGraph)
 	s.router.Get("/status", s.handleStatus)
+	s.router.Get("/favicon.png", s.handleFavicon)
 }
 
 func (s *Server) Start() error {
@@ -556,4 +560,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFS.ReadFile("static/favicon.png")
+	if err != nil {
+		http.Error(w, "Favicon not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=604800") // Cache for 1 week
+	w.Write(data)
 }
