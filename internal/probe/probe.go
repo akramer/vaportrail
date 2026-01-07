@@ -159,30 +159,108 @@ func runHTTP(ctx context.Context, address string) (float64, error) {
 }
 
 func runDNS(ctx context.Context, address string) (float64, error) {
-	// Current behavior: dig @address example.com
-	// We want to query the DNS server at `address` for "example.com"
+	// Query the DNS server at `address` for "example.com" A record
+	// using raw DNS packet construction
 
 	targetAddr := address
 	if !strings.Contains(targetAddr, ":") {
 		targetAddr = targetAddr + ":53"
 	}
 
-	resolver := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			return d.DialContext(ctx, "udp", targetAddr)
-		},
+	// Build a minimal DNS query packet
+	// Header: 12 bytes
+	// Question: variable (domain name + type + class)
+
+	// Transaction ID (2 bytes) - random
+	txID := uint16(rand.Intn(65536))
+
+	// Flags (2 bytes): standard query, recursion desired
+	// 0x0100 = recursion desired
+	flags := uint16(0x0100)
+
+	// Counts (each 2 bytes)
+	qdCount := uint16(1) // 1 question
+	anCount := uint16(0)
+	nsCount := uint16(0)
+	arCount := uint16(0)
+
+	// Build header (12 bytes)
+	header := make([]byte, 12)
+	header[0] = byte(txID >> 8)
+	header[1] = byte(txID)
+	header[2] = byte(flags >> 8)
+	header[3] = byte(flags)
+	header[4] = byte(qdCount >> 8)
+	header[5] = byte(qdCount)
+	header[6] = byte(anCount >> 8)
+	header[7] = byte(anCount)
+	header[8] = byte(nsCount >> 8)
+	header[9] = byte(nsCount)
+	header[10] = byte(arCount >> 8)
+	header[11] = byte(arCount)
+
+	// Build question section for "example.com"
+	// Domain name encoding: length-prefixed labels, ending with 0
+	// example.com -> 7example3com0
+	domain := []byte{
+		7, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+		3, 'c', 'o', 'm',
+		0, // null terminator
+	}
+
+	// QTYPE: A record = 1
+	// QCLASS: IN = 1
+	question := append(domain, 0, 1, 0, 1) // type A (0x0001), class IN (0x0001)
+
+	// Complete packet
+	packet := append(header, question...)
+
+	// Create UDP connection
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "udp", targetAddr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to dial DNS server: %w", err)
+	}
+	defer conn.Close()
+
+	// Set deadline from context
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(deadline)
 	}
 
 	start := time.Now()
-	// querying for "example.com" A record
-	_, err := resolver.LookupIP(ctx, "ip4", "example.com")
+
+	// Send query
+	_, err = conn.Write(packet)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to send DNS query: %w", err)
 	}
 
-	return float64(time.Since(start).Nanoseconds()), nil
+	// Read response (512 bytes is standard max for UDP DNS)
+	response := make([]byte, 512)
+	n, err := conn.Read(response)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read DNS response: %w", err)
+	}
+
+	elapsed := float64(time.Since(start).Nanoseconds())
+
+	// Basic validation: check we got at least a header and the transaction ID matches
+	if n < 12 {
+		return 0, fmt.Errorf("DNS response too short: %d bytes", n)
+	}
+	respTxID := uint16(response[0])<<8 | uint16(response[1])
+	if respTxID != txID {
+		return 0, fmt.Errorf("DNS response transaction ID mismatch: got %d, expected %d", respTxID, txID)
+	}
+
+	// Check RCODE in flags (lower 4 bits of byte 3)
+	rcode := response[3] & 0x0F
+	if rcode != 0 {
+		return 0, fmt.Errorf("DNS query failed with RCODE: %d", rcode)
+	}
+
+	return elapsed, nil
 }
 
 func runCommand(ctx context.Context, cfg Config) (float64, error) {
