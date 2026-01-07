@@ -15,3 +15,6 @@ output.json
 # Brain artifacts
 walkthrough.md
 tasks.md
+
+target
+vaportrail-rs/target
