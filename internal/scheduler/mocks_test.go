@@ -119,6 +119,13 @@ func (m *MockStore) AddAggregatedResult(r *db.AggregatedResult) error {
 	return nil
 }
 
+func (m *MockStore) AddAggregatedResults(results []*db.AggregatedResult) error {
+	for _, r := range results {
+		m.AggregatedResults[r.TargetID] = append(m.AggregatedResults[r.TargetID], *r)
+	}
+	return nil
+}
+
 func (m *MockStore) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error) {
 	var maxTime time.Time
 	for _, r := range m.AggregatedResults[targetID] {

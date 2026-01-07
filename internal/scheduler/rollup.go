@@ -215,18 +215,31 @@ func (rm *RollupManager) processTargetWindow(t db.Target, windowSeconds int, sou
 	// MaxTimeout is in t.Timeout (seconds). Buffer is 2s (from Scheduler).
 	cutoff := rm.clock.Now().Add(-time.Duration(t.Timeout+3) * time.Second)
 
+	// Collect all aggregated results to commit in a single transaction
+	var results []*db.AggregatedResult
+
 	for {
 		windowEnd := nextWindowStart.Add(time.Duration(windowSeconds) * time.Second)
 		if windowEnd.After(cutoff) {
 			break // Caught up
 		}
 
-		rm.aggregateWindow(t, windowSeconds, sourceWindow, nextWindowStart, windowEnd)
+		agg := rm.aggregateWindow(t, windowSeconds, sourceWindow, nextWindowStart, windowEnd)
+		if agg != nil {
+			results = append(results, agg)
+		}
 		nextWindowStart = windowEnd
+	}
+
+	// Commit all results in a single transaction
+	if len(results) > 0 {
+		if err := rm.db.AddAggregatedResults(results); err != nil {
+			log.Printf("RollupManager: Failed to save batch AggResults for %s (w=%ds): %v", t.Name, windowSeconds, err)
+		}
 	}
 }
 
-func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceWindow int, start, end time.Time) {
+func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceWindow int, start, end time.Time) *db.AggregatedResult {
 	// Source Data Fetching
 	var tDigest *tdigest.TDigest
 	var timeoutCount int64
@@ -238,12 +251,11 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 		raws, err := rm.db.GetRawResults(t.ID, start, end, -1)
 		if err != nil {
 			log.Printf("RollupManager: Error fetching raw results: %v", err)
-			return
+			return nil
 		}
 		rowsProcessed = len(raws)
 		if len(raws) == 0 {
-			rm.saveEmptyRollup(t, windowSeconds, start)
-			return
+			return rm.createEmptyRollup(t, windowSeconds, start)
 		}
 
 		tDigest, _ = tdigest.New(tdigest.Compression(100))
@@ -265,12 +277,11 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 		results, err := rm.db.GetAggregatedResults(t.ID, sourceWindow, start, end)
 		if err != nil {
 			log.Printf("RollupManager: Error fetching aggregated results (w=%d): %v", sourceWindow, err)
-			return
+			return nil
 		}
 		rowsProcessed = len(results)
 		if len(results) == 0 {
-			rm.saveEmptyRollup(t, windowSeconds, start)
-			return
+			return rm.createEmptyRollup(t, windowSeconds, start)
 		}
 
 		tDigest, _ = tdigest.New(tdigest.Compression(100))
@@ -288,33 +299,28 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 	tdBytes, err := db.SerializeTDigest(tDigest)
 	if err != nil {
 		log.Printf("RollupManager: Serialization failed: %v", err)
-		return
+		return nil
 	}
 
-	agg := &db.AggregatedResult{
+	log.Printf("RollupManager: Aggregated %s (w=%ds): %d rows, %d timeouts", t.Name, windowSeconds, rowsProcessed, timeoutCount)
+
+	return &db.AggregatedResult{
 		Time:          start,
 		TargetID:      t.ID,
 		WindowSeconds: windowSeconds,
 		TDigestData:   tdBytes,
 		TimeoutCount:  timeoutCount,
 	}
-
-	if err := rm.db.AddAggregatedResult(agg); err != nil {
-		log.Printf("RollupManager: Failed to save AggResult: %v", err)
-	} else {
-		log.Printf("RollupManager: Aggregated %s (w=%ds): %d rows, %d timeouts", t.Name, windowSeconds, rowsProcessed, timeoutCount)
-	}
 }
 
-func (rm *RollupManager) saveEmptyRollup(t db.Target, windowSeconds int, start time.Time) {
+func (rm *RollupManager) createEmptyRollup(t db.Target, windowSeconds int, start time.Time) *db.AggregatedResult {
 	td, _ := tdigest.New(tdigest.Compression(100))
 	tdBytes, _ := db.SerializeTDigest(td)
-	agg := &db.AggregatedResult{
+	return &db.AggregatedResult{
 		Time:          start,
 		TargetID:      t.ID,
 		WindowSeconds: windowSeconds,
 		TDigestData:   tdBytes,
 		TimeoutCount:  0,
 	}
-	rm.db.AddAggregatedResult(agg)
 }

@@ -31,6 +31,7 @@ type Store interface {
 	// New methods
 	AddRawResults(results []RawResult) error
 	AddAggregatedResult(r *AggregatedResult) error
+	AddAggregatedResults(results []*AggregatedResult) error
 	GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error)
 	GetRawResults(targetID int64, start, end time.Time, limit int) ([]RawResult, error)
 	GetAggregatedResults(targetID int64, windowSeconds int, start, end time.Time) ([]AggregatedResult, error)
@@ -281,6 +282,36 @@ func (d *DB) AddAggregatedResult(r *AggregatedResult) error {
 		timeout_count=excluded.timeout_count`,
 		r.Time, r.TargetID, r.WindowSeconds, r.TDigestData, r.TimeoutCount)
 	return err
+}
+
+func (d *DB) AddAggregatedResults(results []*AggregatedResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+
+	stmt, err := tx.Prepare(`INSERT INTO aggregated_results (time, target_id, window_seconds, tdigest_data, timeout_count) 
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(time, target_id, window_seconds) DO UPDATE SET
+		tdigest_data=excluded.tdigest_data,
+		timeout_count=excluded.timeout_count`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range results {
+		_, err = stmt.Exec(r.Time, r.TargetID, r.WindowSeconds, r.TDigestData, r.TimeoutCount)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (d *DB) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, error) {
