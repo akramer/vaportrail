@@ -122,14 +122,34 @@ pub async fn handle_update_target(
     };
 
     // Handle retention policies
-    let retention_json = if let Some(policies) = &req.retention_policies {
+    let new_policies = if let Some(policies) = &req.retention_policies {
         if let Err(e) = validate_retention_policies(policies) {
             return (StatusCode::BAD_REQUEST, e).into_response();
         }
-        serde_json::to_string(policies).unwrap_or_else(|_| existing.retention_policies.clone())
+        policies.clone()
     } else {
-        existing.retention_policies.clone()
+        get_retention_policies(&existing).unwrap_or_default()
     };
+
+    let retention_json = serde_json::to_string(&new_policies)
+        .unwrap_or_else(|_| existing.retention_policies.clone());
+
+    // Detect removed retention policies and delete their aggregated data
+    let old_policies = get_retention_policies(&existing).unwrap_or_default();
+    let new_window_set: std::collections::HashSet<i32> = new_policies.iter().map(|p| p.window).collect();
+    
+    for old_p in &old_policies {
+        if !new_window_set.contains(&old_p.window) {
+            // This window was removed, delete its aggregated data
+            if old_p.window == 0 {
+                // Skip raw data deletion
+                continue;
+            }
+            if let Err(e) = state.store.delete_aggregated_results_by_window(id, old_p.window) {
+                tracing::warn!("Failed to delete aggregated results for window {}: {}", old_p.window, e);
+            }
+        }
+    }
 
     let updated = Target {
         id,

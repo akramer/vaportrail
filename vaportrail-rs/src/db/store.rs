@@ -507,4 +507,58 @@ mod tests {
         store.delete_target(id).unwrap();
         assert!(store.get_target(id).is_err());
     }
+
+    #[test]
+    fn test_delete_aggregated_results_by_window() {
+        let tmp = NamedTempFile::new().unwrap();
+        let store = Store::new(tmp.path()).unwrap();
+        
+        // Create a target
+        let mut target = Target {
+            name: "Test".to_string(),
+            address: "example.com".to_string(),
+            probe_type: "ping".to_string(),
+            ..Default::default()
+        };
+        let id = store.add_target(&mut target).unwrap();
+        
+        let now = Utc::now();
+        
+        // Add aggregated results for two different windows (60s and 300s)
+        let results = vec![
+            AggregatedResult {
+                time: now,
+                target_id: id,
+                window_seconds: 60,
+                tdigest_data: vec![1, 2, 3],
+                timeout_count: 0,
+            },
+            AggregatedResult {
+                time: now,
+                target_id: id,
+                window_seconds: 300,
+                tdigest_data: vec![4, 5, 6],
+                timeout_count: 0,
+            },
+        ];
+        store.add_aggregated_results(&results).unwrap();
+        
+        // Verify both exist
+        let start = now - chrono::Duration::hours(1);
+        let end = now + chrono::Duration::hours(1);
+        
+        let window60 = store.get_aggregated_results(id, 60, start, end).unwrap();
+        let window300 = store.get_aggregated_results(id, 300, start, end).unwrap();
+        assert_eq!(window60.len(), 1, "Should have one 60s window result");
+        assert_eq!(window300.len(), 1, "Should have one 300s window result");
+        
+        // Delete only the 60s window
+        store.delete_aggregated_results_by_window(id, 60).unwrap();
+        
+        // Verify 60s window is gone but 300s remains
+        let window60_after = store.get_aggregated_results(id, 60, start, end).unwrap();
+        let window300_after = store.get_aggregated_results(id, 300, start, end).unwrap();
+        assert_eq!(window60_after.len(), 0, "60s window should be deleted");
+        assert_eq!(window300_after.len(), 1, "300s window should still exist");
+    }
 }
