@@ -1,44 +1,38 @@
-# Build stage
-FROM golang:1.24-bookworm AS builder
+FROM rust:1.75-slim as builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy go mod and sum files
-COPY go.mod go.sum ./
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# Download dependencies
-RUN go mod download
-
-# Copy source code
+# Copy source
 COPY . .
 
-# Build the application
-# CGO_ENABLED=1 is required for go-sqlite3
-# -ldflags="-w -s" reduces binary size
-RUN CGO_ENABLED=1 go build -ldflags="-w -s" -o vaportrail ./cmd/vaportrail
+# Build release binary
+RUN cargo build --release
 
-# Run stage
+# Runtime image
 FROM debian:bookworm-slim
 
-# Install ca-certificates for HTTPS probes and sqlite3 library dependencies
-RUN apt-get update && apt-get install -y ca-certificates iputils-ping bind9-dnsutils sqlite3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/vaportrail .
+COPY --from=builder /app/target/release/vaportrail /app/vaportrail
 
-# Expose the default port
+# Create data directory
+RUN mkdir -p /data
+
+ENV VAPORTRAIL_DB_PATH=/data/vaportrail.db
+ENV VAPORTRAIL_HTTP_PORT=8080
+
 EXPOSE 8080
 
-# Environment variables
-# Environment variables
-ENV VAPORTRAIL_HTTP_PORT=8080
-ENV VAPORTRAIL_DB_PATH=/config/vaportrail.db
-
-# Create a volume for persistent data
-VOLUME ["/config"]
-
-# Run the binary
-CMD ["./vaportrail"]
+CMD ["/app/vaportrail"]
