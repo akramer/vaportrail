@@ -2,8 +2,6 @@
 
 mod handlers;
 
-pub use handlers::*;
-
 use crate::config::ServerConfig;
 use crate::db::Store;
 use crate::scheduler::Scheduler;

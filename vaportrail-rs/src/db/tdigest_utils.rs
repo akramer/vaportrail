@@ -68,11 +68,6 @@ pub fn deserialize_tdigest(data: &[u8]) -> Option<TDigest> {
     Some(TDigest::from_centroids(centroids))
 }
 
-/// Simple wrapper to get percentile estimate
-pub fn estimate_quantile(td: &TDigest, q: f64) -> f64 {
-    td.estimate_quantile(q)
-}
-
 /// Get TDigest statistics: (min, max, sum, count)
 /// Computed from centroids since tdigests crate doesn't expose these directly.
 pub fn get_tdigest_stats(td: &TDigest) -> (f64, f64, f64, f64) {

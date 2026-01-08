@@ -47,14 +47,6 @@ impl RetentionManager {
             }
         });
     }
-
-    /// Stop the retention manager.
-    pub async fn stop(&self) {
-        let stop = self.stop.lock().await;
-        if let Some(tx) = stop.as_ref() {
-            let _ = tx.send(());
-        }
-    }
 }
 
 fn process_retention(store: &Store) {

@@ -31,15 +31,6 @@ impl Default for Target {
     }
 }
 
-/// Legacy result type (kept for compatibility).
-#[derive(Debug, Clone)]
-pub struct LegacyResult {
-    pub time: DateTime<Utc>,
-    pub target_id: i64,
-    pub timeout_count: i64,
-    pub tdigest_data: Vec<u8>,
-}
-
 /// A single raw probe result.
 #[derive(Debug, Clone)]
 pub struct RawResult {

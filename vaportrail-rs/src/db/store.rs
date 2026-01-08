@@ -15,8 +15,6 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("Migration error: {0}")]
     Migration(String),
-    #[error("Not found")]
-    NotFound,
 }
 
 /// Thread-safe database store.
@@ -247,25 +245,6 @@ impl Store {
     }
 
     // --- Aggregated Results ---
-
-    /// Add a single aggregated result.
-    pub fn add_aggregated_result(&self, result: &AggregatedResult) -> Result<(), DbError> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO aggregated_results (time, target_id, window_seconds, tdigest_data, timeout_count) 
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(time, target_id, window_seconds) DO UPDATE SET
-             tdigest_data=excluded.tdigest_data, timeout_count=excluded.timeout_count",
-            params![
-                result.time.format("%Y-%m-%d %H:%M:%S%.9f").to_string(),
-                result.target_id,
-                result.window_seconds,
-                result.tdigest_data,
-                result.timeout_count,
-            ],
-        )?;
-        Ok(())
-    }
 
     /// Add aggregated results in batch.
     pub fn add_aggregated_results(&self, results: &[AggregatedResult]) -> Result<(), DbError> {
