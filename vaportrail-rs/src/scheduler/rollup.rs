@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tdigest::TDigest;
+use tdigests::TDigest;
 use tokio::sync::Mutex;
 
 /// A retention policy for a data window.
@@ -217,7 +217,7 @@ fn aggregate_window(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> Option<AggregatedResult> {
-    let mut tdigest = TDigest::new_with_size(100);
+    let mut tdigest: Option<TDigest> = None;
     let mut timeout_count: i64 = 0;
     let rows_processed: usize;
 
@@ -250,7 +250,9 @@ fn aggregate_window(
             .collect();
 
         if !values.is_empty() {
-            tdigest = TDigest::new_with_size(100).merge_unsorted(values);
+            let mut td = TDigest::from_values(values);
+            td.compress(100);
+            tdigest = Some(td);
         }
     } else {
         // Aggregate from sub-rollups
@@ -287,11 +289,13 @@ fn aggregate_window(
         }
 
         if !all_values.is_empty() {
-            tdigest = TDigest::new_with_size(100).merge_unsorted(all_values);
+            let mut td = TDigest::from_values(all_values);
+            td.compress(100);
+            tdigest = Some(td);
         }
     }
 
-    let td_bytes = serialize_tdigest(&tdigest);
+    let td_bytes = tdigest.as_ref().map(|td| serialize_tdigest(td)).unwrap_or_default();
 
     tracing::info!(
         "RollupManager: Aggregated {} (w={}s) at {}: {} rows, {} timeouts",
@@ -312,14 +316,11 @@ fn aggregate_window(
 }
 
 fn create_empty_rollup(target: &Target, window_seconds: i32, start: DateTime<Utc>) -> AggregatedResult {
-    let td = TDigest::new_with_size(100);
-    let td_bytes = serialize_tdigest(&td);
-    
     AggregatedResult {
         time: start,
         target_id: target.id,
         window_seconds,
-        tdigest_data: td_bytes,
+        tdigest_data: Vec::new(),
         timeout_count: 0,
     }
 }

@@ -1,61 +1,71 @@
 //! TDigest serialization utilities.
 //!
 //! Provides functions to serialize and deserialize TDigest structures
-//! for database storage.
+//! for database storage using varint encoding for compact representation.
 
-use tdigest::TDigest;
+use tdigests::{TDigest, Centroid};
+use unsigned_varint::{encode as varint_encode, decode as varint_decode};
 
 /// Serialize a TDigest to bytes for storage.
 ///
-/// Uses a simple binary format storing centroid data.
+/// Format: [centroid_count: varint] [mean_bits: varint, weight_bits: varint]...
+/// Each f64 is stored as its bit representation encoded as a varint u64.
 pub fn serialize_tdigest(td: &TDigest) -> Vec<u8> {
-    // Get min, max, sum, count from TDigest
-    let min = td.min();
-    let max = td.max();
-    let sum = td.sum();
-    let count = td.count();
+    let centroids = td.centroids();
+    let mut data = Vec::with_capacity(centroids.len() * 16 + 4);
     
-    let mut data = Vec::with_capacity(32);
-    data.extend_from_slice(&min.to_le_bytes());
-    data.extend_from_slice(&max.to_le_bytes());
-    data.extend_from_slice(&sum.to_le_bytes());
-    data.extend_from_slice(&count.to_le_bytes());
+    // Write centroid count
+    let mut buf = varint_encode::u64_buffer();
+    let encoded = varint_encode::u64(centroids.len() as u64, &mut buf);
+    data.extend_from_slice(encoded);
+    
+    // Write each centroid's mean and weight as varint-encoded u64 bits
+    for c in centroids {
+        let mean_bits = c.mean.to_bits();
+        let encoded = varint_encode::u64(mean_bits, &mut buf);
+        data.extend_from_slice(encoded);
+        
+        let weight_bits = c.weight.to_bits();
+        let encoded = varint_encode::u64(weight_bits, &mut buf);
+        data.extend_from_slice(encoded);
+    }
     
     data
 }
 
 /// Deserialize a TDigest from stored bytes.
 pub fn deserialize_tdigest(data: &[u8]) -> Option<TDigest> {
-    if data.len() < 32 {
-        return Some(TDigest::new_with_size(100));
+    if data.is_empty() {
+        return None;
     }
     
-    let min = f64::from_le_bytes(data[0..8].try_into().ok()?);
-    let max = f64::from_le_bytes(data[8..16].try_into().ok()?);
-    let sum = f64::from_le_bytes(data[16..24].try_into().ok()?);
-    let count = f64::from_le_bytes(data[24..32].try_into().ok()?);
+    let mut remaining = data;
     
-    if count <= 0.0 {
-        return Some(TDigest::new_with_size(100));
+    // Read centroid count
+    let (count, rest) = varint_decode::u64(remaining).ok()?;
+    remaining = rest;
+    
+    if count == 0 {
+        return None;
     }
     
-    // Reconstruct approximate TDigest from summary stats
-    // Generate sample points that approximate the original distribution
-    let avg = sum / count;
-    let n = (count as usize).min(100);
+    let mut centroids = Vec::with_capacity(count as usize);
     
-    if n == 0 {
-        return Some(TDigest::new_with_size(100));
+    for _ in 0..count {
+        // Read mean
+        let (mean_bits, rest) = varint_decode::u64(remaining).ok()?;
+        remaining = rest;
+        let mean = f64::from_bits(mean_bits);
+        
+        // Read weight
+        let (weight_bits, rest) = varint_decode::u64(remaining).ok()?;
+        remaining = rest;
+        let weight = f64::from_bits(weight_bits);
+        
+        centroids.push(Centroid::new(mean, weight));
     }
     
-    let mut values = Vec::with_capacity(n);
-    for i in 0..n {
-        let t = i as f64 / (n - 1).max(1) as f64;
-        let val = min + t * (max - min);
-        values.push(val);
-    }
-    
-    Some(TDigest::new_with_size(100).merge_unsorted(values))
+    Some(TDigest::from_centroids(centroids))
 }
 
 /// Simple wrapper to get percentile estimate
@@ -63,9 +73,31 @@ pub fn estimate_quantile(td: &TDigest, q: f64) -> f64 {
     td.estimate_quantile(q)
 }
 
-/// Get TDigest statistics
+/// Get TDigest statistics: (min, max, sum, count)
+/// Computed from centroids since tdigests crate doesn't expose these directly.
 pub fn get_tdigest_stats(td: &TDigest) -> (f64, f64, f64, f64) {
-    (td.min(), td.max(), td.sum(), td.count())
+    let centroids = td.centroids();
+    if centroids.is_empty() {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    
+    let mut min = f64::MAX;
+    let mut max = f64::MIN;
+    let mut sum = 0.0;
+    let mut count = 0.0;
+    
+    for c in centroids {
+        if c.mean < min {
+            min = c.mean;
+        }
+        if c.mean > max {
+            max = c.mean;
+        }
+        sum += c.mean * c.weight;
+        count += c.weight;
+    }
+    
+    (min, max, sum, count)
 }
 
 #[cfg(test)]
@@ -74,21 +106,31 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let td = TDigest::new_with_size(100)
-            .merge_unsorted(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let mut td = TDigest::from_values(values);
+        td.compress(100);
         
         let data = serialize_tdigest(&td);
         let td2 = deserialize_tdigest(&data).unwrap();
         
         // Check that we can still get estimates
-        assert!(td2.estimate_quantile(0.5) > 0.0);
+        assert!((td.estimate_quantile(0.5) - td2.estimate_quantile(0.5)).abs() < 0.01);
     }
 
     #[test]
-    fn test_empty_tdigest() {
-        let td = TDigest::new_with_size(100);
-        let data = serialize_tdigest(&td);
-        let td2 = deserialize_tdigest(&data);
-        assert!(td2.is_some());
+    fn test_empty_data() {
+        let result = deserialize_tdigest(&[]);
+        assert!(result.is_none());
+    }
+    
+    #[test]
+    fn test_stats() {
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let td = TDigest::from_values(values);
+        let (min, max, _sum, count) = get_tdigest_stats(&td);
+        
+        assert!((min - 1.0).abs() < 0.01);
+        assert!((max - 5.0).abs() < 0.01);
+        assert!((count - 5.0).abs() < 0.01);
     }
 }
