@@ -32,10 +32,10 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/target/release/vaportrail /app/vaportrail
 
-# Create data directory
-RUN mkdir -p /data
+# Create config directory
+RUN mkdir -p /config
 
-ENV VAPORTRAIL_DB_PATH=/data/vaportrail.db
+ENV VAPORTRAIL_DB_PATH=/config/vaportrail.db
 ENV VAPORTRAIL_HTTP_PORT=8080
 
 EXPOSE 8080
