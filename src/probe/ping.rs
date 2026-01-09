@@ -59,21 +59,27 @@ fn detect_icmp_capability() -> IcmpCapability {
 
 /// Run a ping probe against the given address.
 ///
-/// Returns latency in nanoseconds. Uses spawn_blocking for sub-millisecond precision.
+/// Returns latency in nanoseconds. Uses a dedicated OS thread for precise timing.
 pub async fn run_ping_probe(address: &str, timeout: Duration) -> Result<f64, ProbeError> {
     let capability = *ICMP_CAPABILITY.get_or_init(detect_icmp_capability);
 
     if capability == IcmpCapability::Native {
-        // Resolve address before spawn_blocking (DNS is async)
+        // Resolve address before spawning thread (DNS is async)
         let ip = resolve_address(address).await?;
         let addr_str = address.to_string();
         
-        // Run blocking ICMP in dedicated thread for precise timing
-        let result = tokio::task::spawn_blocking(move || {
-            run_blocking_ping(ip, timeout)
-        })
-        .await
-        .map_err(|e| ProbeError::Network(format!("spawn_blocking failed: {}", e)))?;
+        // Use oneshot channel to receive result from dedicated OS thread
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        // Spawn a new OS-level thread for each ping (not tokio's thread pool)
+        std::thread::spawn(move || {
+            let result = run_blocking_ping(ip, timeout);
+            let _ = tx.send(result);
+        });
+        
+        // Wait for result from the thread
+        let result = rx.await
+            .map_err(|_| ProbeError::Network("Ping thread died unexpectedly".to_string()))?;
         
         match result {
             Ok(latency) => return Ok(latency),
