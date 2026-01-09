@@ -39,19 +39,17 @@ fn generate_ping_id() -> (u16, u16) {
 
 /// Detect ICMP capability by attempting to create a socket.
 fn detect_icmp_capability() -> IcmpCapability {
-    // Try to create an ICMP socket (DGRAM first for unprivileged, then RAW)
-    // On Linux with ping_group_range set, DGRAM works without root
-    // On macOS, DGRAM ICMP works without root
+    // Try to create an ICMP socket (RAW first, then DGRAM for unprivileged)
     
-    // Try DGRAM first (unprivileged on Linux/macOS)
-    if Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).is_ok() {
-        tracing::info!("Ping probe: using native ICMP (DGRAM socket, unprivileged)");
+    // Try RAW socket first (requires CAP_NET_RAW or root)
+    if Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).is_ok() {
+        tracing::info!("Ping probe: using native ICMP (RAW socket, privileged)");
         return IcmpCapability::Native;
     }
     
-    // Try RAW socket (requires CAP_NET_RAW or root)
-    if Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).is_ok() {
-        tracing::info!("Ping probe: using native ICMP (RAW socket, privileged)");
+    // Try DGRAM (unprivileged on Linux with ping_group_range set, or macOS)
+    if Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).is_ok() {
+        tracing::info!("Ping probe: using native ICMP (DGRAM socket, unprivileged)");
         return IcmpCapability::Native;
     }
     
