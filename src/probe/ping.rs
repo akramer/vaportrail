@@ -130,9 +130,9 @@ fn run_blocking_ping(ip: IpAddr, timeout: Duration) -> Result<f64, ProbeError> {
 
 /// ICMP Echo Request for IPv4
 fn run_blocking_ping_v4(ip: Ipv4Addr, timeout: Duration) -> Result<f64, ProbeError> {
-    // Try DGRAM first (unprivileged), then RAW
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4))
-        .or_else(|_| Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)))
+    // Try RAW first (privileged), then DGRAM (unprivileged)
+    let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
+        .or_else(|_| Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)))
         .map_err(|e| ProbeError::Network(format!("Failed to create ICMP socket: {}", e)))?;
     
     socket.set_read_timeout(Some(timeout))
@@ -204,9 +204,9 @@ fn run_blocking_ping_v4(ip: Ipv4Addr, timeout: Duration) -> Result<f64, ProbeErr
 
 /// ICMP Echo Request for IPv6
 fn run_blocking_ping_v6(ip: Ipv6Addr, timeout: Duration) -> Result<f64, ProbeError> {
-    // Try DGRAM first (unprivileged), then RAW
-    let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::ICMPV6))
-        .or_else(|_| Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6)))
+    // Try RAW first (privileged), then DGRAM (unprivileged)
+    let socket = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6))
+        .or_else(|_| Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::ICMPV6)))
         .map_err(|e| ProbeError::Network(format!("Failed to create ICMPv6 socket: {}", e)))?;
     
     socket.set_read_timeout(Some(timeout))
