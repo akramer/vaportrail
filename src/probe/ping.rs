@@ -59,14 +59,29 @@ fn detect_icmp_capability() -> IcmpCapability {
 
 /// Run a ping probe against the given address.
 ///
-/// Returns latency in nanoseconds. Uses a dedicated OS thread for precise timing.
+/// Returns latency in nanoseconds. Uses external ping command by default,
+/// falls back to native ICMP if command fails.
 pub async fn run_ping_probe(address: &str, timeout: Duration) -> Result<f64, ProbeError> {
+    // Log which method we're using (only on first call via OnceLock logging)
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| {
+        tracing::info!("Ping probe: using external ping command (with native ICMP fallback)");
+    });
+    
+    // Try external ping command first (most reliable across platforms)
+    match run_ping_command(address, timeout).await {
+        Ok(latency) => return Ok(latency),
+        Err(e) => {
+            tracing::debug!("Ping command failed for {}, trying native ICMP: {:?}", address, e);
+        }
+    }
+    
+    // Fall back to native ICMP
     let capability = *ICMP_CAPABILITY.get_or_init(detect_icmp_capability);
-
+    
     if capability == IcmpCapability::Native {
         // Resolve address before spawning thread (DNS is async)
         let ip = resolve_address(address).await?;
-        let addr_str = address.to_string();
         
         // Use oneshot channel to receive result from dedicated OS thread
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -81,28 +96,11 @@ pub async fn run_ping_probe(address: &str, timeout: Duration) -> Result<f64, Pro
         let result = rx.await
             .map_err(|_| ProbeError::Network("Ping thread died unexpectedly".to_string()))?;
         
-        match result {
-            Ok(latency) => return Ok(latency),
-            Err(e) => {
-                // Check if this is a permission error
-                let error_str = format!("{:?}", e);
-                if error_str.contains("Permission")
-                    || error_str.contains("Operation not permitted")
-                    || error_str.contains("denied")
-                {
-                    tracing::warn!(
-                        "Native ping failed with permission error for {}, falling back to command: {}",
-                        addr_str, error_str
-                    );
-                    return run_ping_command(&addr_str, timeout).await;
-                }
-                return Err(e);
-            }
-        }
+        return result;
     }
-
-    // Fallback to command execution
-    run_ping_command(address, timeout).await
+    
+    // Neither method available
+    Err(ProbeError::Command("Ping command failed and native ICMP unavailable".to_string()))
 }
 
 /// Resolve hostname to IP address.
