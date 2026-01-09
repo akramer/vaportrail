@@ -28,11 +28,13 @@ static ICMP_CAPABILITY: OnceLock<IcmpCapability> = OnceLock::new();
 
 /// Ping sequence counter for unique identification
 static PING_SEQUENCE: AtomicU16 = AtomicU16::new(0);
-/// Ping identifier (process-unique)
-static PING_IDENTIFIER: OnceLock<u16> = OnceLock::new();
 
-fn get_ping_identifier() -> u16 {
-    *PING_IDENTIFIER.get_or_init(|| rand::random())
+/// Generate a unique identifier for each ping request.
+/// This ensures concurrent pings can be distinguished even to the same destination.
+fn generate_ping_id() -> (u16, u16) {
+    let identifier: u16 = rand::random();
+    let sequence = PING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    (identifier, sequence)
 }
 
 /// Detect ICMP capability by attempting to create a socket.
@@ -144,9 +146,8 @@ fn run_blocking_ping_v4(ip: Ipv4Addr, timeout: Duration) -> Result<f64, ProbeErr
     socket.connect(&dest.into())
         .map_err(|e| ProbeError::Network(format!("Failed to connect: {}", e)))?;
     
-    // Build ICMP Echo Request packet
-    let identifier = get_ping_identifier();
-    let sequence = PING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    // Build ICMP Echo Request packet with unique identifier
+    let (identifier, sequence) = generate_ping_id();
     let packet = build_icmp_echo_request(identifier, sequence);
     
     // Start timing just before send
@@ -161,41 +162,46 @@ fn run_blocking_ping_v4(ip: Ipv4Addr, timeout: Duration) -> Result<f64, ProbeErr
             }
         })?;
     
-    // Receive reply
-    let mut buf: [MaybeUninit<u8>; 1500] = unsafe { MaybeUninit::uninit().assume_init() };
-    let len = socket.recv(&mut buf).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut {
-            ProbeError::Timeout(timeout)
-        } else {
-            ProbeError::Network(format!("Failed to receive: {}", e))
+    // Receive reply - loop until we get OUR reply or timeout
+    loop {
+        let mut buf: [MaybeUninit<u8>; 1500] = unsafe { MaybeUninit::uninit().assume_init() };
+        let len = socket.recv(&mut buf).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut {
+                ProbeError::Timeout(timeout)
+            } else {
+                ProbeError::Network(format!("Failed to receive: {}", e))
+            }
+        })?;
+        // SAFETY: recv initialized `len` bytes
+        let buf: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
+        
+        // Stop timing immediately after receive
+        let elapsed = start.elapsed();
+        
+        // Check if we've exceeded timeout
+        if elapsed >= timeout {
+            return Err(ProbeError::Timeout(timeout));
         }
-    })?;
-    // SAFETY: recv initialized `len` bytes
-    let buf: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
-    
-    // Stop timing immediately after receive
-    let elapsed = start.elapsed();
-    
-    // Verify this is our echo reply
-    // For DGRAM sockets, we get just the ICMP header (no IP header)
-    // For RAW sockets, we'd get IP header + ICMP
-    if len >= 8 {
-        // ICMP type 0 = Echo Reply
-        let icmp_offset = if buf[0] >> 4 == 4 { 20 } else { 0 }; // Skip IP header if present
-        if len > icmp_offset + 4 {
-            let reply_type = buf[icmp_offset];
-            let reply_id = u16::from_be_bytes([buf[icmp_offset + 4], buf[icmp_offset + 5]]);
-            let reply_seq = u16::from_be_bytes([buf[icmp_offset + 6], buf[icmp_offset + 7]]);
-            
-            if reply_type == 0 && reply_id == identifier && reply_seq == sequence {
-                return Ok(elapsed.as_nanos() as f64);
+        
+        // Verify this is our echo reply
+        // For DGRAM sockets, we get just the ICMP header (no IP header)
+        // For RAW sockets, we'd get IP header + ICMP
+        if len >= 8 {
+            // ICMP type 0 = Echo Reply
+            let icmp_offset = if buf[0] >> 4 == 4 { 20 } else { 0 }; // Skip IP header if present
+            if len > icmp_offset + 7 {
+                let reply_type = buf[icmp_offset];
+                let reply_id = u16::from_be_bytes([buf[icmp_offset + 4], buf[icmp_offset + 5]]);
+                let reply_seq = u16::from_be_bytes([buf[icmp_offset + 6], buf[icmp_offset + 7]]);
+                
+                if reply_type == 0 && reply_id == identifier && reply_seq == sequence {
+                    return Ok(elapsed.as_nanos() as f64);
+                }
+                // Wrong packet - continue waiting for the right one
             }
         }
+        // Received something else, keep waiting
     }
-    
-    // Got some response, but not our echo reply - still return the timing
-    // This handles cases where we get a different ICMP message
-    Ok(elapsed.as_nanos() as f64)
 }
 
 /// ICMP Echo Request for IPv6
@@ -214,9 +220,8 @@ fn run_blocking_ping_v6(ip: Ipv6Addr, timeout: Duration) -> Result<f64, ProbeErr
     socket.connect(&dest.into())
         .map_err(|e| ProbeError::Network(format!("Failed to connect: {}", e)))?;
     
-    // Build ICMPv6 Echo Request packet
-    let identifier = get_ping_identifier();
-    let sequence = PING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    // Build ICMPv6 Echo Request packet with unique identifier
+    let (identifier, sequence) = generate_ping_id();
     let packet = build_icmpv6_echo_request(identifier, sequence);
     
     // Start timing just before send
@@ -231,33 +236,40 @@ fn run_blocking_ping_v6(ip: Ipv6Addr, timeout: Duration) -> Result<f64, ProbeErr
             }
         })?;
     
-    // Receive reply
-    let mut buf: [MaybeUninit<u8>; 1500] = unsafe { MaybeUninit::uninit().assume_init() };
-    let len = socket.recv(&mut buf).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut {
-            ProbeError::Timeout(timeout)
-        } else {
-            ProbeError::Network(format!("Failed to receive: {}", e))
-        }
-    })?;
-    // SAFETY: recv initialized `len` bytes
-    let buf: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
-    
-    // Stop timing immediately after receive
-    let elapsed = start.elapsed();
-    
-    // Verify this is our echo reply (ICMPv6 type 129 = Echo Reply)
-    if len >= 8 {
-        let reply_type = buf[0];
-        let reply_id = u16::from_be_bytes([buf[4], buf[5]]);
-        let reply_seq = u16::from_be_bytes([buf[6], buf[7]]);
+    // Receive reply - loop until we get OUR reply or timeout
+    loop {
+        let mut buf: [MaybeUninit<u8>; 1500] = unsafe { MaybeUninit::uninit().assume_init() };
+        let len = socket.recv(&mut buf).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut {
+                ProbeError::Timeout(timeout)
+            } else {
+                ProbeError::Network(format!("Failed to receive: {}", e))
+            }
+        })?;
+        // SAFETY: recv initialized `len` bytes
+        let buf: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
         
-        if reply_type == 129 && reply_id == identifier && reply_seq == sequence {
-            return Ok(elapsed.as_nanos() as f64);
+        // Stop timing immediately after receive
+        let elapsed = start.elapsed();
+        
+        // Check if we've exceeded timeout
+        if elapsed >= timeout {
+            return Err(ProbeError::Timeout(timeout));
         }
+        
+        // Verify this is our echo reply (ICMPv6 type 129 = Echo Reply)
+        if len >= 8 {
+            let reply_type = buf[0];
+            let reply_id = u16::from_be_bytes([buf[4], buf[5]]);
+            let reply_seq = u16::from_be_bytes([buf[6], buf[7]]);
+            
+            if reply_type == 129 && reply_id == identifier && reply_seq == sequence {
+                return Ok(elapsed.as_nanos() as f64);
+            }
+            // Wrong packet - continue waiting for the right one
+        }
+        // Received something else, keep waiting
     }
-    
-    Ok(elapsed.as_nanos() as f64)
 }
 
 /// Build an ICMP Echo Request packet (type 8, code 0).
