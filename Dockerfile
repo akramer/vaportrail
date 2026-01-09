@@ -1,12 +1,17 @@
-FROM rust:1.92-slim as builder
+FROM debian:bookworm-slim as builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies and Rust
 RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
     libssl-dev \
     pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.83.0
+
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Copy source
 COPY . .
