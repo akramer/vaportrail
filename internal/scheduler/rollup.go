@@ -302,7 +302,7 @@ func (rm *RollupManager) aggregateWindow(t db.Target, windowSeconds int, sourceW
 		return nil
 	}
 
-	log.Printf("RollupManager: Aggregated %s (w=%ds): %d rows, %d timeouts", t.Name, windowSeconds, rowsProcessed, timeoutCount)
+	log.Printf("RollupManager: Aggregated %s (w=%ds, start=%s): %d rows, %d timeouts", t.Name, windowSeconds, start.Format("15:04:05"), rowsProcessed, timeoutCount)
 
 	return &db.AggregatedResult{
 		Time:          start,
