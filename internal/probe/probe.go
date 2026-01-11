@@ -5,21 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
-
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
 )
 
 // Runner defines the interface for running a probe.
@@ -253,204 +246,9 @@ func runDNS(ctx context.Context, address string) (float64, error) {
 	return elapsed, nil
 }
 
-// icmpCapability tracks whether native ICMP is available and which network to use
-var (
-	icmpCapabilityOnce      sync.Once
-	icmpNetwork             string // "ip4:icmp" for privileged, "udp4" for unprivileged, "" if unavailable
-	timestampCapabilityOnce sync.Once
-	useKernelTimestamp      bool
-)
-
-// detectICMPCapability checks if we can send ICMP packets natively.
-// It tries privileged raw sockets first, then unprivileged ICMP (on supported systems).
-func detectICMPCapability() {
-	icmpCapabilityOnce.Do(func() {
-		// Try privileged raw socket first (requires root/CAP_NET_RAW)
-		conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-		if err == nil {
-			conn.Close()
-			icmpNetwork = "ip4:icmp"
-			log.Println("Ping probe: using native ICMP (privileged raw socket)")
-			return
-		}
-
-		// Try unprivileged ICMP via UDP (works on macOS and some Linux configs)
-		conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
-		if err == nil {
-			conn.Close()
-			icmpNetwork = "udp4"
-			log.Println("Ping probe: using native ICMP (unprivileged UDP)")
-			return
-		}
-
-		// Neither works, will fall back to command
-		icmpNetwork = ""
-		log.Println("Ping probe: using command fallback (ping -c 1)")
-	})
-}
-
-// runPing attempts native ICMP ping first, falling back to command execution
+// runPing executes the ping command and parses the result
 func runPing(ctx context.Context, cfg Config) (float64, error) {
-	detectICMPCapability()
-
-	if icmpNetwork != "" {
-		latency, err := runNativeICMP(ctx, cfg.Address, icmpNetwork)
-		if err == nil {
-			return latency, nil
-		}
-		// If native ICMP fails for reasons other than permissions (e.g., network error),
-		// we should report that error, not fall back silently.
-		// However, if it's a permission error that somehow slipped through, fall back.
-		if !os.IsPermission(err) && !strings.Contains(err.Error(), "operation not permitted") {
-			return 0, err
-		}
-	}
-
-	// Fall back to command execution
 	return runCommand(ctx, cfg)
-}
-
-// runNativeICMP sends an ICMP echo request and measures round-trip time using kernel timestamps
-func runNativeICMP(ctx context.Context, address, network string) (float64, error) {
-	// Resolve the target address
-	dst, err := net.ResolveIPAddr("ip4", address)
-	if err != nil {
-		return 0, fmt.Errorf("failed to resolve address %s: %w", address, err)
-	}
-
-	// Create ICMP connection
-	conn, err := icmp.ListenPacket(network, "0.0.0.0")
-	if err != nil {
-		return 0, fmt.Errorf("failed to create ICMP listener: %w", err)
-	}
-	defer conn.Close()
-
-	// Detect kernel timestamp capability once per program run
-	timestampCapabilityOnce.Do(func() {
-		// Access the underlying net.PacketConn via IPv4PacketConn
-		if pc := conn.IPv4PacketConn(); pc != nil {
-			if sc, ok := pc.PacketConn.(interface {
-				SyscallConn() (syscall.RawConn, error)
-			}); ok {
-				if rawConn, err := sc.SyscallConn(); err == nil {
-					rawConn.Control(func(fd uintptr) {
-						// SO_TIMESTAMPNS = 35 on Linux, provides nanosecond precision timestamps
-						// On macOS, SO_TIMESTAMP = 0x0400 provides microsecond precision
-						if err := syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_TIMESTAMP, 1); err == nil {
-							useKernelTimestamp = true
-							log.Println("Ping probe: using kernel timestamps (SO_TIMESTAMP)")
-						} else {
-							log.Println("Ping probe: using userspace timestamps (SO_TIMESTAMP not available)")
-						}
-					})
-				} else {
-					log.Println("Ping probe: using userspace timestamps (SyscallConn not available)")
-				}
-			} else {
-				log.Println("Ping probe: using userspace timestamps (SyscallConn interface not supported)")
-			}
-		} else {
-			log.Println("Ping probe: using userspace timestamps (IPv4PacketConn not available)")
-		}
-	})
-
-	// Set deadline from context
-	if deadline, ok := ctx.Deadline(); ok {
-		conn.SetDeadline(deadline)
-	}
-
-	// Generate a unique random ID and sequence number per-probe
-	// This ensures concurrent probes can distinguish their replies
-	id := rand.Intn(65536)
-	seq := rand.Intn(65536)
-
-	// Build ICMP echo request message
-	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
-		Code: 0,
-		Body: &icmp.Echo{
-			ID:   id,
-			Seq:  seq,
-			Data: []byte("vaportrail-ping"),
-		},
-	}
-
-	msgBytes, err := msg.Marshal(nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to marshal ICMP message: %w", err)
-	}
-
-	// Determine the destination address format based on network type
-	var dstAddr net.Addr
-	if network == "udp4" {
-		dstAddr = &net.UDPAddr{IP: dst.IP}
-	} else {
-		dstAddr = dst
-	}
-
-	start := time.Now()
-
-	// Send ICMP echo request
-	_, err = conn.WriteTo(msgBytes, dstAddr)
-	if err != nil {
-		return 0, fmt.Errorf("failed to send ICMP echo request: %w", err)
-	}
-
-	// Read responses using kernel timestamps if available
-	if useKernelTimestamp {
-		return readWithKernelTimestamp(conn, dst, id, seq, start)
-	}
-
-	// Fallback to userspace timing
-	return readWithUserspaceTimestamp(conn, dst, id, seq, start)
-}
-
-// readWithUserspaceTimestamp reads ICMP replies using standard userspace timing
-func readWithUserspaceTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int, start time.Time) (float64, error) {
-	reply := make([]byte, 1500)
-	for {
-		n, peer, err := conn.ReadFrom(reply)
-		if err != nil {
-			return 0, fmt.Errorf("failed to read ICMP reply: %w", err)
-		}
-
-		elapsed := float64(time.Since(start).Nanoseconds())
-
-		// Validate source address matches the destination we pinged
-		var peerIP net.IP
-		switch p := peer.(type) {
-		case *net.IPAddr:
-			peerIP = p.IP
-		case *net.UDPAddr:
-			peerIP = p.IP
-		}
-		if peerIP != nil && !peerIP.Equal(dst.IP) {
-			continue
-		}
-
-		// Parse ICMP message
-		rm, err := icmp.ParseMessage(1, reply[:n])
-		if err != nil {
-			return 0, fmt.Errorf("failed to parse ICMP reply: %w", err)
-		}
-
-		// Verify it's an echo reply
-		switch rm.Type {
-		case ipv4.ICMPTypeEchoReply:
-			if echo, ok := rm.Body.(*icmp.Echo); ok {
-				if echo.ID != id || echo.Seq != seq {
-					continue
-				}
-			}
-			return elapsed, nil
-		case ipv4.ICMPTypeDestinationUnreachable:
-			return 0, fmt.Errorf("destination unreachable")
-		case ipv4.ICMPTypeTimeExceeded:
-			return 0, fmt.Errorf("time exceeded (TTL expired)")
-		default:
-			continue
-		}
-	}
 }
 
 func runCommand(ctx context.Context, cfg Config) (float64, error) {
@@ -460,10 +258,6 @@ func runCommand(ctx context.Context, cfg Config) (float64, error) {
 		if ctx.Err() == context.DeadlineExceeded {
 			return 0, fmt.Errorf("probe timed out after %v", cfg.Timeout)
 		}
-		// If the command fails, we still try to parse the output because some tools (like ping)
-		// might exit with non-zero even if we got some RTT data (though unlikely with count=1).
-		// However, for single probe, usually error means failure.
-		// For now, let's treat execution error as failure.
 		return 0, fmt.Errorf("command failed: %v, output: %s", err, string(output))
 	}
 
