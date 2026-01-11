@@ -74,7 +74,7 @@ func readWithKernelTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int
 
 	// If TX timestamping is enabled, use the new path
 	if useTXTimestamp {
-		return readWithTXTimestamp(fd, dst, id, seq, start)
+		return readWithTXTimestamp(fd, conn, dst, id, seq, start)
 	}
 
 	// Fall back to RX-only timestamps
@@ -82,7 +82,7 @@ func readWithKernelTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int
 }
 
 // readWithTXTimestamp retrieves TX timestamp from error queue and RX timestamp from data path
-func readWithTXTimestamp(fd int, dst *net.IPAddr, id, seq int, sendTime time.Time) (float64, error) {
+func readWithTXTimestamp(fd int, conn *icmp.PacketConn, dst *net.IPAddr, id, seq int, sendTime time.Time) (float64, error) {
 	// Buffer for packet data
 	buf := make([]byte, 1500)
 	// Buffer for control messages (out-of-band data)
@@ -126,10 +126,33 @@ func readWithTXTimestamp(fd int, dst *net.IPAddr, id, seq int, sendTime time.Tim
 		_ = n // We don't need the error queue packet data
 	}
 
-	// Now read the actual ICMP reply with RX timestamp
+	// Now read the actual ICMP reply with RX timestamp using poll for timeout
+	// Use 5 second timeout (standard probe timeout)
+	// The conn deadline is set but we can't easily access it, so use a reasonable default
+	timeoutMs := 5000
+	_ = conn // conn passed for potential future deadline access
+
+	pollFds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+
 	for {
-		n, oobn, _, from, err := unix.Recvmsg(fd, buf, oob, 0)
+		// Poll with timeout
+		n, err := unix.Poll(pollFds, timeoutMs)
 		if err != nil {
+			if err == unix.EINTR {
+				continue // Interrupted, retry
+			}
+			return 0, fmt.Errorf("poll failed: %w", err)
+		}
+		if n == 0 {
+			return 0, fmt.Errorf("timeout waiting for ICMP reply")
+		}
+
+		// Data is ready, read it
+		msgN, oobn, _, from, err := unix.Recvmsg(fd, buf, oob, unix.MSG_DONTWAIT)
+		if err != nil {
+			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
+				continue // Spurious wakeup, retry poll
+			}
 			return 0, fmt.Errorf("failed to recvmsg: %w", err)
 		}
 
@@ -172,7 +195,7 @@ func readWithTXTimestamp(fd int, dst *net.IPAddr, id, seq int, sendTime time.Tim
 		}
 
 		// Parse ICMP message
-		rm, err := icmp.ParseMessage(1, buf[:n])
+		rm, err := icmp.ParseMessage(1, buf[:msgN])
 		if err != nil {
 			return 0, fmt.Errorf("failed to parse ICMP reply: %w", err)
 		}
