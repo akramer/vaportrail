@@ -49,19 +49,13 @@ func readWithKernelTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int
 		return fallbackToUserspace(conn, dst, id, seq, start)
 	}
 
-	// Try to enable TX timestamping (once per process)
+	// Detect TX timestamp capability once per process (for logging only)
 	txTimestampOnce.Do(func() {
-		// Enable SO_TIMESTAMPING with TX and RX software timestamps
-		// SOF_TIMESTAMPING_TX_SOFTWARE = 0x2  - Get TX timestamp
-		// SOF_TIMESTAMPING_RX_SOFTWARE = 0x8  - Get RX timestamp
-		// SOF_TIMESTAMPING_SOFTWARE = 0x10   - Enable software timestamping
-		// SOF_TIMESTAMPING_OPT_CMSG = 0x400  - Report timestamps via cmsg
-		// SOF_TIMESTAMPING_OPT_TSONLY = 0x800 - Only timestamp, not the full packet
+		// Try to enable SO_TIMESTAMPING to see if it's supported
 		flags := unix.SOF_TIMESTAMPING_TX_SOFTWARE |
 			unix.SOF_TIMESTAMPING_RX_SOFTWARE |
 			unix.SOF_TIMESTAMPING_SOFTWARE |
-			unix.SOF_TIMESTAMPING_OPT_CMSG |
-			unix.SOF_TIMESTAMPING_OPT_TSONLY
+			unix.SOF_TIMESTAMPING_OPT_CMSG
 
 		err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TIMESTAMPING, flags)
 		if err == nil {
@@ -72,8 +66,15 @@ func readWithKernelTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int
 		}
 	})
 
-	// If TX timestamping is enabled, use the new path
+	// If TX timestamping is supported, set it on THIS socket (each probe creates a new socket)
 	if useTXTimestamp {
+		flags := unix.SOF_TIMESTAMPING_TX_SOFTWARE |
+			unix.SOF_TIMESTAMPING_RX_SOFTWARE |
+			unix.SOF_TIMESTAMPING_SOFTWARE |
+			unix.SOF_TIMESTAMPING_OPT_CMSG
+
+		// Set on this socket - we know it's supported from the detection above
+		unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TIMESTAMPING, flags)
 		return readWithTXTimestamp(fd, conn, dst, id, seq, start)
 	}
 
