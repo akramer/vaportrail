@@ -19,6 +19,12 @@ var (
 	timestampFallbackOnce sync.Once
 )
 
+// Note: macOS does NOT support send-side (TX) kernel timestamps.
+// Only receive timestamps are available via SO_TIMESTAMP.
+// This means there will always be ~60-100µs overhead compared to the ping command,
+// which uses kernel-level timing on both send and receive.
+// This limitation is inherent to the macOS kernel and cannot be worked around.
+
 // readWithKernelTimestamp reads ICMP replies and extracts kernel receive timestamps on macOS
 func readWithKernelTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int, start time.Time) (float64, error) {
 	// Get the raw file descriptor
