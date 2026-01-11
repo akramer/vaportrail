@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -31,10 +32,9 @@ func readWithKernelTimestamp(conn *icmp.PacketConn, dst *net.IPAddr, id, seq int
 	var fd int
 	if pc := conn.IPv4PacketConn(); pc != nil {
 		if sc, ok := pc.PacketConn.(interface {
-			SyscallConn() (interface{ Control(func(fd uintptr)) error }, error)
+			SyscallConn() (syscall.RawConn, error)
 		}); ok {
-			rawConn, err := sc.SyscallConn()
-			if err == nil {
+			if rawConn, err := sc.SyscallConn(); err == nil {
 				rawConn.Control(func(fdPtr uintptr) {
 					fd = int(fdPtr)
 				})
