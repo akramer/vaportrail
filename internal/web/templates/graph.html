@@ -37,7 +37,27 @@
     </span>
 </div>
 
-<div class="chart-container">
+<style>
+    #tooltip-overlay {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: #fff;
+        padding: 10px;
+        border-radius: 5px;
+        pointer-events: none;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 100;
+        display: none;
+        min-width: 150px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    }
+</style>
+
+<div class="chart-container" style="position: relative;">
+    <div id="tooltip-overlay"></div>
     <canvas id="chart"></canvas>
 </div>
 
@@ -255,6 +275,24 @@
                 }
             };
 
+            const hoverHighlightPlugin = {
+                id: 'hoverHighlight',
+                afterDatasetsDraw: (chart) => {
+                    const activeElements = chart.getActiveElements();
+                    if (activeElements.length > 0) {
+                        const { ctx, chartArea } = chart;
+                        const activePoint = activeElements[0];
+                        const x = activePoint.element.x;
+                        const width = activePoint.element.width;
+
+                        ctx.save();
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)'; // Green tint
+                        ctx.fillRect(x - width / 2, chartArea.top, width, chartArea.bottom - chartArea.top);
+                        ctx.restore();
+                    }
+                }
+            };
+
             let datasets = [dataset];
             if (rawData.length > 0) {
                 const scatterData = rawData.map(d => ({ x: d.Time, y: d.MinNS / 1000000 }));
@@ -313,40 +351,78 @@
                             }
                         },
                         tooltip: {
-                            callbacks: {
-                                title: function (context) {
-                                    // Use original timestamp if available (for shifted bars)
-                                    const item = context[0];
-                                    if (item.raw && item.raw.originalTime) {
-                                        return new Date(item.raw.originalTime).toLocaleString();
-                                    }
-                                    return item.label;
-                                },
-                                label: function (context) {
-                                    if (context.dataset.type === 'scatter') {
-                                        return `Raw: ${context.parsed.y.toFixed(2)} ms`;
-                                    }
-                                    const i = context.dataIndex;
-                                    const d = data[i];
-                                    if (!d) return '';
-                                    // Tooltip title (x-axis) is auto-formatted by Chart.js based on x value. 
-                                    // Since we shifted x, the title might be off by 30s. 
-                                    // But we can't easily change the title from the label callback.
-                                    // However, the user asked for visual alignment.
+                            enabled: false, // Disable default canvas tooltip
+                            external: function (context) {
+                                // Tooltip Element
+                                let tooltipEl = document.getElementById('tooltip-overlay');
 
-                                    return [
-                                        `Max: ${(d.P100 / 1e6).toFixed(2)} ms`,
-                                        `Median: ${(d.P50 / 1e6).toFixed(2)} ms`,
-                                        `Min: ${(d.P0 / 1e6).toFixed(2)} ms`,
-                                        `Success: ${d.ProbeCount}`,
-                                        `Timeout: ${d.TimeoutCount}`
-                                    ];
+                                // Hide if no tooltip
+                                const tooltipModel = context.tooltip;
+                                if (tooltipModel.opacity === 0) {
+                                    tooltipEl.style.display = 'none';
+                                    return;
                                 }
+
+                                // Smart Relative Positioning (5% offset, prefer left)
+                                const offset = context.chart.width * 0.05;
+                                const tooltipWidth = tooltipEl.offsetWidth;
+                                const chartLeft = context.chart.chartArea.left;
+                                const caretX = tooltipModel.caretX;
+
+                                let targetLeft = caretX - offset - tooltipWidth;
+
+                                if (targetLeft < chartLeft) {
+                                    // If runs off left side, flip to right
+                                    tooltipEl.style.left = (caretX + offset) + 'px';
+                                    tooltipEl.style.right = 'auto';
+                                } else {
+                                    // Otherwise keep on left
+                                    tooltipEl.style.left = targetLeft + 'px';
+                                    tooltipEl.style.right = 'auto';
+                                }
+
+                                // Set Text
+                                if (tooltipModel.body) {
+                                    const item = tooltipModel.dataPoints[0];
+                                    const d = context.chart.data.datasets[item.datasetIndex].data[item.dataIndex]; // This is the barData object
+                                    const originalData = data[item.dataIndex]; // This is the API result object
+
+                                    // Safely access originalData
+                                    if (!originalData) return;
+
+                                    let content = '';
+                                    // Title
+                                    if (d.originalTime) {
+                                        content += `<div style="font-weight:bold; margin-bottom:5px;">${new Date(d.originalTime).toLocaleString()}</div>`;
+                                    }
+
+                                    // Body
+                                    if (originalData.Percentiles && originalData.Percentiles.length === 21) {
+                                        for (let k = 10; k >= 0; k--) {
+                                            const p = k * 10;
+                                            const idx = k * 2;
+                                            const val = originalData.Percentiles[idx] / 1e6;
+                                            content += `<div>P${p}: ${val.toFixed(2)} ms</div>`;
+                                        }
+                                    } else {
+                                        content += `<div>Max: ${(originalData.P100 / 1e6).toFixed(2)} ms</div>`;
+                                        content += `<div>Median: ${(originalData.P50 / 1e6).toFixed(2)} ms</div>`;
+                                        content += `<div>Min: ${(originalData.P0 / 1e6).toFixed(2)} ms</div>`;
+                                    }
+                                    content += `<hr style="border: 0; border-top: 1px solid #555; margin: 5px 0;">`;
+                                    content += `<div>Success: ${originalData.ProbeCount}</div>`;
+                                    content += `<div>Timeout: ${originalData.TimeoutCount}</div>`;
+
+                                    tooltipEl.innerHTML = content;
+                                }
+
+                                // Display
+                                tooltipEl.style.display = 'block';
                             }
                         }
-                    }
+                    },
                 },
-                plugins: [backgroundPlugin]
+                plugins: [backgroundPlugin, hoverHighlightPlugin]
             });
 
         } else {
