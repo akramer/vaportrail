@@ -1,0 +1,588 @@
+{{template "header" .}}
+
+<div class="dashboard-header">
+    <h1>View Dashboards</h1>
+    <div class="dashboard-controls">
+        <label for="dashboard-select">Dashboard:</label>
+        <select id="dashboard-select" onchange="loadSelectedDashboard()">
+            <option value="">-- Select a Dashboard --</option>
+        </select>
+        <button onclick="editDashboard()" id="edit-btn" style="display:none;">Edit</button>
+        <button onclick="deleteDashboard()" id="delete-btn" style="display:none;">Delete</button>
+        <a href="/dashboards/create" class="btn-create">+ Create New</a>
+    </div>
+</div>
+
+<div class="time-controls" style="display:none;" id="time-controls">
+    <span>Presets:</span>
+    <button onclick="setRange('1h')">Last 1h</button>
+    <button onclick="setRange('24h')">Last 24h</button>
+    <button onclick="setRange('7d')">Last 7d</button>
+    <button onclick="setRange('30d')">Last 30d</button>
+
+    <span style="margin-left: 20px;">Range:</span>
+    <input type="datetime-local" id="start-time">
+    <span>to</span>
+    <input type="datetime-local" id="end-time">
+    <button onclick="updateAllGraphs()">Go</button>
+
+    <span style="margin-left: 20px;">Graph Mode:</span>
+    <select id="graph-mode" onchange="changeGraphMode(this.value)">
+        <option value="heatmap">Heatmap</option>
+        <option value="line">Line Chart</option>
+    </select>
+</div>
+
+<div id="graphs-container"></div>
+
+<style>
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .dashboard-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .dashboard-controls select {
+        padding: 5px 10px;
+        min-width: 200px;
+    }
+
+    .btn-create {
+        background: #28a745;
+        color: white;
+        padding: 8px 15px;
+        text-decoration: none;
+        border-radius: 4px;
+    }
+
+    .time-controls {
+        margin-bottom: 20px;
+        padding: 10px;
+        background: #f5f5f5;
+        border-radius: 4px;
+    }
+
+    .time-controls button {
+        margin-right: 5px;
+    }
+
+    .graph-card {
+        border: 1px solid #ddd;
+        margin-bottom: 20px;
+        border-radius: 4px;
+        background: white;
+    }
+
+    .graph-card h3 {
+        margin: 0;
+        padding: 10px 15px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #ddd;
+    }
+
+    .graph-chart-container {
+        position: relative;
+        height: 300px;
+        padding: 10px;
+    }
+
+    #tooltip-overlay {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: #fff;
+        padding: 10px;
+        border-radius: 5px;
+        pointer-events: none;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 100;
+        display: none;
+        min-width: 150px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    }
+</style>
+
+<script>
+    let dashboards = [];
+    let currentDashboardId = null;
+    let currentGraphMode = 'heatmap';
+    let chartInstances = {};
+
+    function toLocalISO(d) {
+        const offset = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+    }
+
+    function setInputs(start, end) {
+        document.getElementById('start-time').value = toLocalISO(start);
+        document.getElementById('end-time').value = toLocalISO(end);
+    }
+
+    function getInputs() {
+        const s = document.getElementById('start-time').value;
+        const e = document.getElementById('end-time').value;
+        if (s && e) {
+            return { start: new Date(s), end: new Date(e) };
+        }
+        return null;
+    }
+
+    function setRange(range) {
+        const end = new Date();
+        let start = new Date();
+        switch (range) {
+            case '1h': start.setTime(end.getTime() - 1 * 60 * 60 * 1000); break;
+            case '24h': start.setTime(end.getTime() - 24 * 60 * 60 * 1000); break;
+            case '7d': start.setTime(end.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+            case '30d': start.setTime(end.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+        }
+        setInputs(start, end);
+        updateAllGraphs();
+    }
+
+    function changeGraphMode(mode) {
+        currentGraphMode = mode;
+        updateAllGraphs();
+    }
+
+    async function init() {
+        // Initialize time range to last 1h
+        const end = new Date();
+        const start = new Date(end.getTime() - 60 * 60 * 1000);
+        setInputs(start, end);
+
+        // Load targets (for name lookup)
+        const targetsRes = await fetch('/api/targets');
+        const targets = await targetsRes.json() || [];
+        window.targetsMap = {};
+        for (const t of targets) {
+            window.targetsMap[t.ID] = t.Name;
+        }
+
+        // Load dashboards
+        const res = await fetch('/api/dashboards');
+        dashboards = await res.json() || [];
+
+        const select = document.getElementById('dashboard-select');
+        for (const d of dashboards) {
+            const opt = document.createElement('option');
+            opt.value = d.ID;
+            opt.textContent = d.Name;
+            select.appendChild(opt);
+        }
+
+        // Check if a dashboard is specified in URL
+        const params = new URLSearchParams(window.location.search);
+        const dashboardId = params.get('id');
+        if (dashboardId) {
+            select.value = dashboardId;
+            loadSelectedDashboard();
+        }
+    }
+
+    async function loadSelectedDashboard() {
+        const select = document.getElementById('dashboard-select');
+        const dashboardId = parseInt(select.value);
+
+        if (!dashboardId) {
+            document.getElementById('graphs-container').innerHTML = '';
+            document.getElementById('time-controls').style.display = 'none';
+            document.getElementById('edit-btn').style.display = 'none';
+            document.getElementById('delete-btn').style.display = 'none';
+            return;
+        }
+
+        currentDashboardId = dashboardId;
+        document.getElementById('time-controls').style.display = 'block';
+        document.getElementById('edit-btn').style.display = 'inline-block';
+        document.getElementById('delete-btn').style.display = 'inline-block';
+
+        // Update URL
+        history.pushState(null, '', '/dashboards/view?id=' + dashboardId);
+
+        // Load graphs
+        const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
+        const graphs = await res.json() || [];
+
+        const container = document.getElementById('graphs-container');
+        container.innerHTML = '';
+
+        // Destroy existing chart instances
+        for (const key in chartInstances) {
+            if (chartInstances[key]) {
+                chartInstances[key].destroy();
+            }
+        }
+        chartInstances = {};
+
+        for (const graph of graphs) {
+            const div = document.createElement('div');
+            div.className = 'graph-card';
+            div.innerHTML = `
+                <h3>${graph.Title}</h3>
+                <div class="graph-chart-container" style="position: relative;">
+                    <div id="tooltip-${graph.ID}" class="tooltip-overlay" style="position: absolute; top: 10px; right: 10px; background: rgba(0, 0, 0, 0.8); color: #fff; padding: 10px; border-radius: 5px; pointer-events: none; font-family: monospace; font-size: 12px; z-index: 100; display: none; min-width: 150px;"></div>
+                    <canvas id="chart-${graph.ID}"></canvas>
+                </div>
+            `;
+            container.appendChild(div);
+
+            // Load chart for this graph
+            loadGraphChart(graph);
+        }
+
+        if (graphs.length === 0) {
+            container.innerHTML = '<p>No graphs in this dashboard. <a href="/dashboards/create?id=' + dashboardId + '">Add some graphs</a>.</p>';
+        }
+    }
+
+    async function loadGraphChart(graph) {
+        const range = getInputs();
+        if (!range) return;
+
+        const targetIds = graph.TargetIDs || [];
+        if (targetIds.length === 0) return;
+
+        // Fetch data for all targets
+        const allData = [];
+        for (const targetId of targetIds) {
+            const url = `/api/results/${targetId}?start=${range.start.toISOString()}&end=${range.end.toISOString()}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data) {
+                allData.push({ targetId, data });
+            }
+        }
+
+        const canvasId = `chart-${graph.ID}`;
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+
+        if (chartInstances[graph.ID]) {
+            chartInstances[graph.ID].destroy();
+        }
+
+        const chartCtx = ctx.getContext('2d');
+
+        if (currentGraphMode === 'heatmap') {
+            // For heatmap, we'll overlay multiple targets
+            const datasets = [];
+            const plugins = [];
+
+            for (let i = 0; i < allData.length; i++) {
+                const { targetId, data } = allData[i];
+                const hue = (i * 137) % 360; // Different hue for each target
+                const targetName = window.targetsMap[targetId] || `Target ${targetId}`;
+
+                const barData = data.map(d => {
+                    const timeMs = new Date(d.Time).getTime();
+                    const windowMs = (d.WindowSeconds || 60) * 1000;
+                    return {
+                        x: timeMs + windowMs / 2,
+                        y: [
+                            (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS)) / 1000000,
+                            (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS)) / 1000000
+                        ],
+                        originalTime: d.Time,
+                        originalData: d,
+                        targetId: targetId
+                    };
+                });
+
+                datasets.push({
+                    label: targetName,
+                    data: barData,
+                    backgroundColor: function (context) {
+                        const chart = context.chart;
+                        const { ctx, chartArea, scales } = chart;
+                        if (!chartArea) return null;
+
+                        const index = context.dataIndex;
+                        const d = data[index];
+                        if (!d || d.ProbeCount === 0) return 'rgba(0,0,0,0)';
+
+                        // Use different hue for each target (spread evenly across color wheel)
+                        const hue = (i * 137) % 360; // Golden angle for good distribution
+                        const alpha = 0.7; // Translucency for overlapping
+
+                        if (d.Percentiles && d.Percentiles.length === 21) {
+                            const pValues = d.Percentiles.map(v => v / 1000000);
+                            const p1Val = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : pValues[0]) / 1000000;
+                            const topY = scales.y.getPixelForValue((d.P99 || pValues[20]) / 1000000);
+                            const bottomY = scales.y.getPixelForValue((d.P1 || pValues[0]) / 1000000);
+
+                            if (Math.abs(topY - bottomY) < 0.1) return `hsla(${hue}, 90%, 40%, ${alpha})`;
+
+                            const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
+
+                            // Faster falloff: use exponential curve
+                            // Edges very light (95%), median dark (35%)
+                            let stops = [];
+                            for (let j = 0; j <= 20; j++) {
+                                const val = pValues[j];
+                                const y = scales.y.getPixelForValue(val);
+                                let stop = (y - topY) / (bottomY - topY);
+                                stop = Math.max(0, Math.min(1, stop));
+
+                                // Distance from median (j=10) with exponential falloff
+                                const dist = Math.abs(j - 10) / 10; // 0 at median, 1 at edges
+                                // Exponential curve: fast rise from median
+                                const curve = Math.pow(dist, 0.4); // < 1 = faster falloff near center
+                                const lightness = 35 + curve * 60; // 35% (dark) to 95% (very light)
+                                const stopAlpha = alpha * (1 - curve * 0.6); // Fade alpha too at edges
+                                stops.push({ stop, lightness, alpha: stopAlpha });
+                            }
+
+                            stops.sort((a, b) => a.stop - b.stop);
+                            let uniqueStops = [];
+                            if (stops.length > 0) {
+                                let current = stops[0];
+                                for (let k = 1; k < stops.length; k++) {
+                                    const next = stops[k];
+                                    if (Math.abs(next.stop - current.stop) < 1e-5) {
+                                        // Keep the darker one (lower lightness)
+                                        if (next.lightness < current.lightness) {
+                                            current = next;
+                                        }
+                                    } else {
+                                        uniqueStops.push(current);
+                                        current = next;
+                                    }
+                                }
+                                uniqueStops.push(current);
+                            }
+
+                            uniqueStops.forEach(s => {
+                                gradient.addColorStop(s.stop, `hsla(${hue}, 85%, ${s.lightness}%, ${s.alpha})`);
+                            });
+                            return gradient;
+                        }
+                        return `hsla(${hue}, 85%, 45%, ${alpha})`;
+                    },
+                    borderWidth: 0,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0,
+                    xAxisID: 'x',
+                    grouped: false,
+                    order: 10 - i // Earlier targets draw first (behind)
+                });
+
+                // Add median line plugin for this target
+                plugins.push({
+                    id: `medianLine_${i}_${targetId}`,
+                    afterDatasetsDraw: (chart) => {
+                        const meta = chart.getDatasetMeta(i);
+                        if (!meta || meta.hidden) return;
+
+                        const { ctx, scales } = chart;
+                        const hue = (i * 137) % 360;
+
+                        ctx.save();
+                        ctx.strokeStyle = `hsla(${hue}, 100%, 30%, 0.9)`;
+                        ctx.lineWidth = 3;
+
+                        data.forEach((d, idx) => {
+                            if (!d || d.ProbeCount === 0) return;
+                            const bar = meta.data[idx];
+                            if (!bar) return;
+
+                            const medianVal = (d.P50 || 0) / 1000000;
+                            const medianY = scales.y.getPixelForValue(medianVal);
+                            const width = bar.width;
+                            const x = bar.x - width / 2;
+
+                            ctx.beginPath();
+                            ctx.moveTo(x, medianY);
+                            ctx.lineTo(x + width, medianY);
+                            ctx.stroke();
+                        });
+                        ctx.restore();
+                    }
+                });
+
+                // Background plugin for timeout visualization (for first target only to avoid overlap)
+                if (i === 0) {
+                    plugins.push({
+                        id: 'customCanvasBackgroundColor',
+                        beforeDraw: (chart) => {
+                            const { ctx, chartArea, scales } = chart;
+                            ctx.save();
+                            data.forEach((d, idx) => {
+                                const total = d.ProbeCount + d.TimeoutCount;
+                                if (total === 0) return;
+                                const timeoutPct = d.TimeoutCount / total;
+
+                                const meta = chart.getDatasetMeta(0);
+                                const bar = meta.data[idx];
+                                if (bar) {
+                                    const width = bar.width;
+                                    const x = bar.x - width / 2;
+                                    const gb = Math.floor(255 * (1 - timeoutPct));
+                                    ctx.fillStyle = `rgb(255, ${gb}, ${gb})`;
+                                    ctx.fillRect(x, chartArea.top, width, chartArea.bottom - chartArea.top);
+                                }
+                            });
+                            ctx.restore();
+                        }
+                    });
+                }
+            }
+
+            chartInstances[graph.ID] = new Chart(chartCtx, {
+                type: 'bar',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } },
+                            grid: { display: false },
+                            min: range.start.toISOString(),
+                            max: range.end.toISOString(),
+                            offset: false
+                        },
+                        y: { type: 'linear', display: true, title: { display: true, text: 'Latency (ms)' } }
+                    },
+                    plugins: {
+                        zoom: {
+                            zoom: {
+                                drag: { enabled: true },
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setInputs(new Date(min), new Date(max));
+                                    updateAllGraphs();
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    const d = context.raw.originalData;
+                                    const tid = context.raw.targetId;
+                                    const tname = window.targetsMap[tid] || `Target ${tid}`;
+                                    if (!d) return '';
+                                    return [
+                                        `${tname}:`,
+                                        `  Max: ${(d.P100 / 1e6).toFixed(2)} ms`,
+                                        `  Median: ${(d.P50 / 1e6).toFixed(2)} ms`,
+                                        `  Min: ${(d.P0 / 1e6).toFixed(2)} ms`,
+                                        `  Success: ${d.ProbeCount}`,
+                                        `  Timeout: ${d.TimeoutCount}`
+                                    ];
+                                }
+                            }
+                        },
+                        legend: {
+                            display: true,
+                            position: 'bottom',
+                            labels: {
+                                generateLabels: function (chart) {
+                                    return chart.data.datasets.map((ds, i) => ({
+                                        text: ds.label,
+                                        fillStyle: `hsla(${(i * 137) % 360}, 80%, 50%, 0.8)`,
+                                        strokeStyle: `hsla(${(i * 137) % 360}, 80%, 40%, 1)`,
+                                        lineWidth: 1,
+                                        hidden: false,
+                                        index: i
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: plugins
+            });
+
+        } else {
+            // Line chart mode
+            const datasets = [];
+            const colors = ['#FF0000', '#00FF00', '#0000FF', '#FF00FF', '#00FFFF', '#FFFF00'];
+
+            for (let i = 0; i < allData.length; i++) {
+                const { targetId, data } = allData[i];
+                const color = colors[i % colors.length];
+
+                const p50Data = data.map(d => ({ x: d.Time, y: (d.P50) / 1000000 }));
+
+                datasets.push({
+                    label: `${window.targetsMap[targetId] || 'Target ' + targetId} P50`,
+                    data: p50Data,
+                    borderColor: color,
+                    backgroundColor: color,
+                    fill: false,
+                    tension: 0.1,
+                    borderWidth: 2,
+                    yAxisID: 'y'
+                });
+            }
+
+            chartInstances[graph.ID] = new Chart(chartCtx, {
+                type: 'line',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
+                        y: { type: 'linear', display: true, position: 'left', beginAtZero: true, title: { display: true, text: 'Latency (ms)' } }
+                    },
+                    plugins: {
+                        zoom: {
+                            zoom: {
+                                drag: { enabled: true },
+                                mode: 'x',
+                                onZoomComplete: function ({ chart }) {
+                                    const { min, max } = chart.scales.x;
+                                    setInputs(new Date(min), new Date(max));
+                                    updateAllGraphs();
+                                }
+                            }
+                        },
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+    }
+
+    async function updateAllGraphs() {
+        if (!currentDashboardId) return;
+        const res = await fetch(`/api/dashboards/${currentDashboardId}/graphs`);
+        const graphs = await res.json() || [];
+        for (const graph of graphs) {
+            loadGraphChart(graph);
+        }
+    }
+
+    function editDashboard() {
+        if (currentDashboardId) {
+            window.location.href = '/dashboards/create?id=' + currentDashboardId;
+        }
+    }
+
+    async function deleteDashboard() {
+        if (!currentDashboardId) return;
+        if (!confirm('Are you sure you want to delete this dashboard?')) return;
+
+        await fetch(`/api/dashboards/${currentDashboardId}`, { method: 'DELETE' });
+        window.location.href = '/dashboards/view';
+    }
+
+    init();
+</script>
+
+{{template "footer" .}}

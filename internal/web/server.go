@@ -79,6 +79,20 @@ func (s *Server) routes() {
 	s.router.Get("/graph/{id}", s.handleGraph)
 	s.router.Get("/status", s.handleStatus)
 	s.router.Get("/favicon.png", s.handleFavicon)
+
+	// Dashboard routes
+	s.router.Get("/api/dashboards", s.handleGetDashboards)
+	s.router.Post("/api/dashboards", s.handleCreateDashboard)
+	s.router.Put("/api/dashboards/{id}", s.handleUpdateDashboard)
+	s.router.Delete("/api/dashboards/{id}", s.handleDeleteDashboard)
+	s.router.Get("/api/dashboards/{id}/graphs", s.handleGetDashboardGraphs)
+	s.router.Post("/api/dashboards/{id}/graphs", s.handleCreateDashboardGraph)
+	s.router.Put("/api/dashboards/{dashboardId}/graphs/{graphId}", s.handleUpdateDashboardGraph)
+	s.router.Delete("/api/dashboards/{dashboardId}/graphs/{graphId}", s.handleDeleteDashboardGraph)
+
+	// Dashboard pages
+	s.router.Get("/dashboards/create", s.handleDashboardCreatePage)
+	s.router.Get("/dashboards/view", s.handleDashboardViewPage)
 }
 
 func (s *Server) Start() error {
@@ -571,4 +585,224 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=604800") // Cache for 1 week
 	w.Write(data)
+}
+
+// Dashboard API handlers
+
+func (s *Server) handleGetDashboards(w http.ResponseWriter, r *http.Request) {
+	dashboards, err := s.db.GetDashboards()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dashboards)
+}
+
+func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
+	var dash db.Dashboard
+	if err := json.NewDecoder(r.Body).Decode(&dash); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if dash.Name == "" {
+		http.Error(w, "Name is required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := s.db.AddDashboard(&dash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	dash.ID = id
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(dash)
+}
+
+func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	var dash db.Dashboard
+	if err := json.NewDecoder(r.Body).Decode(&dash); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	dash.ID = id
+
+	if dash.Name == "" {
+		http.Error(w, "Name is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.UpdateDashboard(&dash); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(dash)
+}
+
+func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.DeleteDashboard(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleGetDashboardGraphs(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	dashboardID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid dashboard ID", http.StatusBadRequest)
+		return
+	}
+
+	graphs, err := s.db.GetDashboardGraphs(dashboardID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(graphs)
+}
+
+type CreateGraphRequest struct {
+	Title     string  `json:"title"`
+	Position  int     `json:"position"`
+	TargetIDs []int64 `json:"targetIds"`
+}
+
+func (s *Server) handleCreateDashboardGraph(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	dashboardID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid dashboard ID", http.StatusBadRequest)
+		return
+	}
+
+	var req CreateGraphRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Title == "" {
+		http.Error(w, "Title is required", http.StatusBadRequest)
+		return
+	}
+
+	graph := &db.DashboardGraph{
+		DashboardID: dashboardID,
+		Title:       req.Title,
+		Position:    req.Position,
+	}
+
+	graphID, err := s.db.AddDashboardGraph(graph)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set targets if provided
+	if len(req.TargetIDs) > 0 {
+		if err := s.db.SetGraphTargets(graphID, req.TargetIDs); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	graph.ID = graphID
+	graph.TargetIDs = req.TargetIDs
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(graph)
+}
+
+func (s *Server) handleUpdateDashboardGraph(w http.ResponseWriter, r *http.Request) {
+	graphIdStr := chi.URLParam(r, "graphId")
+	graphID, err := strconv.ParseInt(graphIdStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid graph ID", http.StatusBadRequest)
+		return
+	}
+
+	var req CreateGraphRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Title == "" {
+		http.Error(w, "Title is required", http.StatusBadRequest)
+		return
+	}
+
+	graph := &db.DashboardGraph{
+		ID:       graphID,
+		Title:    req.Title,
+		Position: req.Position,
+	}
+
+	if err := s.db.UpdateDashboardGraph(graph); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update targets
+	if err := s.db.SetGraphTargets(graphID, req.TargetIDs); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	graph.TargetIDs = req.TargetIDs
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(graph)
+}
+
+func (s *Server) handleDeleteDashboardGraph(w http.ResponseWriter, r *http.Request) {
+	graphIdStr := chi.URLParam(r, "graphId")
+	graphID, err := strconv.ParseInt(graphIdStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid graph ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.DeleteDashboardGraph(graphID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// Dashboard page handlers
+
+func (s *Server) handleDashboardCreatePage(w http.ResponseWriter, r *http.Request) {
+	if err := s.templates.ExecuteTemplate(w, "dashboard_create.html", nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleDashboardViewPage(w http.ResponseWriter, r *http.Request) {
+	if err := s.templates.ExecuteTemplate(w, "dashboard_view.html", nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

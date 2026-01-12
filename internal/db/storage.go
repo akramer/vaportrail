@@ -47,6 +47,18 @@ type Store interface {
 	GetFreelistCount() (int64, error)
 	GetTDigestStats() ([]TDigestStat, error)
 	GetRawStats() (*RawStats, error)
+
+	// Dashboard methods
+	AddDashboard(d *Dashboard) (int64, error)
+	UpdateDashboard(d *Dashboard) error
+	GetDashboards() ([]Dashboard, error)
+	GetDashboard(id int64) (*Dashboard, error)
+	DeleteDashboard(id int64) error
+	AddDashboardGraph(g *DashboardGraph) (int64, error)
+	UpdateDashboardGraph(g *DashboardGraph) error
+	GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error)
+	DeleteDashboardGraph(id int64) error
+	SetGraphTargets(graphID int64, targetIDs []int64) error
 }
 
 type TDigestStat struct {
@@ -135,6 +147,19 @@ type AggregatedResult struct {
 	WindowSeconds int
 	TDigestData   []byte
 	TimeoutCount  int64
+}
+
+type Dashboard struct {
+	ID   int64
+	Name string
+}
+
+type DashboardGraph struct {
+	ID          int64
+	DashboardID int64
+	Title       string
+	Position    int
+	TargetIDs   []int64 // Populated on read
 }
 
 func (d *DB) AddTarget(t *Target) (int64, error) {
@@ -498,4 +523,137 @@ func (d *DB) GetRawStats() (*RawStats, error) {
 		Count:      count,
 		TotalBytes: count * 50,
 	}, nil
+}
+
+// Dashboard methods
+
+func (d *DB) AddDashboard(dash *Dashboard) (int64, error) {
+	res, err := d.Exec(`INSERT INTO dashboards (name) VALUES (?)`, dash.Name)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (d *DB) UpdateDashboard(dash *Dashboard) error {
+	_, err := d.Exec(`UPDATE dashboards SET name=? WHERE id=?`, dash.Name, dash.ID)
+	return err
+}
+
+func (d *DB) GetDashboards() ([]Dashboard, error) {
+	rows, err := d.Query(`SELECT id, name FROM dashboards ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dashboards []Dashboard
+	for rows.Next() {
+		var dash Dashboard
+		if err := rows.Scan(&dash.ID, &dash.Name); err != nil {
+			return nil, err
+		}
+		dashboards = append(dashboards, dash)
+	}
+	return dashboards, nil
+}
+
+func (d *DB) GetDashboard(id int64) (*Dashboard, error) {
+	var dash Dashboard
+	err := d.QueryRow(`SELECT id, name FROM dashboards WHERE id = ?`, id).Scan(&dash.ID, &dash.Name)
+	if err != nil {
+		return nil, err
+	}
+	return &dash, nil
+}
+
+func (d *DB) DeleteDashboard(id int64) error {
+	// Dashboard graphs and their targets will be deleted via CASCADE
+	_, err := d.Exec(`DELETE FROM dashboards WHERE id = ?`, id)
+	return err
+}
+
+func (d *DB) AddDashboardGraph(g *DashboardGraph) (int64, error) {
+	res, err := d.Exec(`INSERT INTO dashboard_graphs (dashboard_id, title, position) VALUES (?, ?, ?)`,
+		g.DashboardID, g.Title, g.Position)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (d *DB) UpdateDashboardGraph(g *DashboardGraph) error {
+	_, err := d.Exec(`UPDATE dashboard_graphs SET title=?, position=? WHERE id=?`,
+		g.Title, g.Position, g.ID)
+	return err
+}
+
+func (d *DB) GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error) {
+	rows, err := d.Query(`SELECT id, dashboard_id, title, position FROM dashboard_graphs WHERE dashboard_id = ? ORDER BY position`, dashboardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var graphs []DashboardGraph
+	for rows.Next() {
+		var g DashboardGraph
+		if err := rows.Scan(&g.ID, &g.DashboardID, &g.Title, &g.Position); err != nil {
+			return nil, err
+		}
+		// Fetch target IDs for this graph
+		targetRows, err := d.Query(`SELECT target_id FROM dashboard_graph_targets WHERE graph_id = ?`, g.ID)
+		if err != nil {
+			return nil, err
+		}
+		for targetRows.Next() {
+			var tid int64
+			if err := targetRows.Scan(&tid); err != nil {
+				targetRows.Close()
+				return nil, err
+			}
+			g.TargetIDs = append(g.TargetIDs, tid)
+		}
+		targetRows.Close()
+		graphs = append(graphs, g)
+	}
+	return graphs, nil
+}
+
+func (d *DB) DeleteDashboardGraph(id int64) error {
+	// Targets will be deleted via CASCADE
+	_, err := d.Exec(`DELETE FROM dashboard_graphs WHERE id = ?`, id)
+	return err
+}
+
+func (d *DB) SetGraphTargets(graphID int64, targetIDs []int64) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+
+	// Delete existing targets for this graph
+	_, err = tx.Exec(`DELETE FROM dashboard_graph_targets WHERE graph_id = ?`, graphID)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Insert new targets
+	stmt, err := tx.Prepare(`INSERT INTO dashboard_graph_targets (graph_id, target_id) VALUES (?, ?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+
+	for _, tid := range targetIDs {
+		_, err = stmt.Exec(graphID, tid)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

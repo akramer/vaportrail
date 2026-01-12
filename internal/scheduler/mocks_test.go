@@ -243,6 +243,47 @@ func (m *MockStore) GetRawStats() (*db.RawStats, error) {
 	return &db.RawStats{Count: count, TotalBytes: count * 50}, nil
 }
 
+// Dashboard methods (stubs - not used in scheduler tests)
+func (m *MockStore) AddDashboard(d *db.Dashboard) (int64, error) {
+	return 0, nil
+}
+
+func (m *MockStore) UpdateDashboard(d *db.Dashboard) error {
+	return nil
+}
+
+func (m *MockStore) GetDashboards() ([]db.Dashboard, error) {
+	return nil, nil
+}
+
+func (m *MockStore) GetDashboard(id int64) (*db.Dashboard, error) {
+	return nil, nil
+}
+
+func (m *MockStore) DeleteDashboard(id int64) error {
+	return nil
+}
+
+func (m *MockStore) AddDashboardGraph(g *db.DashboardGraph) (int64, error) {
+	return 0, nil
+}
+
+func (m *MockStore) UpdateDashboardGraph(g *db.DashboardGraph) error {
+	return nil
+}
+
+func (m *MockStore) GetDashboardGraphs(dashboardID int64) ([]db.DashboardGraph, error) {
+	return nil, nil
+}
+
+func (m *MockStore) DeleteDashboardGraph(id int64) error {
+	return nil
+}
+
+func (m *MockStore) SetGraphTargets(graphID int64, targetIDs []int64) error {
+	return nil
+}
+
 // MockRunner implements probe.Runner for testing
 type MockRunner struct {
 	RunFn func(cfg probe.Config) (float64, error)

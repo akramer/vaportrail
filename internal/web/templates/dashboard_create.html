@@ -1,0 +1,284 @@
+{{template "header" .}}
+
+<h1 id="page-title">Create Dashboard</h1>
+
+<div class="dashboard-form">
+    <div class="form-group">
+        <label for="dashboard-name">Dashboard Name:</label>
+        <input type="text" id="dashboard-name" placeholder="My Dashboard" required>
+    </div>
+
+    <div class="graphs-section">
+        <h2>Graphs</h2>
+        <div id="graphs-container"></div>
+        <button type="button" onclick="addGraph()">+ Add Graph</button>
+    </div>
+
+    <div class="form-actions" style="margin-top: 20px;">
+        <button onclick="saveDashboard()" class="btn-primary">Save Dashboard</button>
+        <button onclick="window.location.href='/dashboards/view'" class="btn-secondary">Cancel</button>
+    </div>
+</div>
+
+<style>
+    .dashboard-form {
+        max-width: 800px;
+    }
+
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+
+    .form-group input[type="text"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+    .graphs-section {
+        margin-top: 20px;
+    }
+
+    .graph-item {
+        border: 1px solid #ddd;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-radius: 4px;
+        background: #f9f9f9;
+    }
+
+    .graph-item h3 {
+        margin-top: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .graph-item .remove-btn {
+        background: #ff4444;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    .target-checkboxes {
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-top: 10px;
+        background: white;
+    }
+
+    .target-checkboxes label {
+        display: block;
+        padding: 5px 0;
+    }
+
+    .btn-primary {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    .btn-secondary {
+        background: #6c757d;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        cursor: pointer;
+        border-radius: 4px;
+        margin-left: 10px;
+    }
+</style>
+
+<script>
+    let allTargets = [];
+    let graphCount = 0;
+    let editingDashboardId = null;
+
+    async function init() {
+        // Load all targets
+        const res = await fetch('/api/targets');
+        allTargets = await res.json() || [];
+
+        // Check if editing an existing dashboard
+        const params = new URLSearchParams(window.location.search);
+        const dashboardId = params.get('id');
+        if (dashboardId) {
+            await loadDashboard(parseInt(dashboardId));
+        } else {
+            // Add one empty graph by default
+            addGraph();
+        }
+    }
+
+    async function loadDashboard(id) {
+        editingDashboardId = id;
+        document.getElementById('page-title').textContent = 'Edit Dashboard';
+
+        // Load dashboard info
+        const dashRes = await fetch('/api/dashboards');
+        const dashboards = await dashRes.json() || [];
+        const dashboard = dashboards.find(d => d.ID === id);
+        if (dashboard) {
+            document.getElementById('dashboard-name').value = dashboard.Name;
+        }
+
+        // Load graphs
+        const graphsRes = await fetch(`/api/dashboards/${id}/graphs`);
+        const graphs = await graphsRes.json() || [];
+
+        for (const graph of graphs) {
+            addGraph(graph.Title, graph.TargetIDs || [], graph.ID);
+        }
+
+        if (graphs.length === 0) {
+            addGraph();
+        }
+    }
+
+    function addGraph(title = '', selectedTargetIds = [], graphId = null) {
+        graphCount++;
+        const container = document.getElementById('graphs-container');
+
+        const div = document.createElement('div');
+        div.className = 'graph-item';
+        div.dataset.graphId = graphId || '';
+
+        let targetCheckboxes = '';
+        for (const t of allTargets) {
+            const checked = selectedTargetIds.includes(t.ID) ? 'checked' : '';
+            targetCheckboxes += `
+                <label>
+                    <input type="checkbox" value="${t.ID}" ${checked}>
+                    ${t.Name} (${t.ProbeType})
+                </label>
+            `;
+        }
+
+        div.innerHTML = `
+            <h3>
+                <span>Graph #${graphCount}</span>
+                <button type="button" class="remove-btn" onclick="removeGraph(this)">Remove</button>
+            </h3>
+            <div class="form-group">
+                <label>Graph Title:</label>
+                <input type="text" class="graph-title" value="${title}" placeholder="Graph Title" required>
+            </div>
+            <div class="form-group">
+                <label>Targets:</label>
+                <div class="target-checkboxes">
+                    ${targetCheckboxes}
+                </div>
+            </div>
+        `;
+
+        container.appendChild(div);
+    }
+
+    function removeGraph(btn) {
+        const graphItem = btn.closest('.graph-item');
+        graphItem.remove();
+    }
+
+    async function saveDashboard() {
+        const name = document.getElementById('dashboard-name').value.trim();
+        if (!name) {
+            alert('Please enter a dashboard name');
+            return;
+        }
+
+        const graphItems = document.querySelectorAll('.graph-item');
+        if (graphItems.length === 0) {
+            alert('Please add at least one graph');
+            return;
+        }
+
+        // Collect graph data
+        const graphs = [];
+        for (let i = 0; i < graphItems.length; i++) {
+            const item = graphItems[i];
+            const title = item.querySelector('.graph-title').value.trim();
+            if (!title) {
+                alert('Please enter a title for all graphs');
+                return;
+            }
+
+            const checkboxes = item.querySelectorAll('.target-checkboxes input:checked');
+            const targetIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+            if (targetIds.length === 0) {
+                alert('Please select at least one target for each graph');
+                return;
+            }
+
+            graphs.push({
+                title: title,
+                position: i,
+                targetIds: targetIds,
+                existingId: item.dataset.graphId ? parseInt(item.dataset.graphId) : null
+            });
+        }
+
+        try {
+            let dashboardId = editingDashboardId;
+
+            if (editingDashboardId) {
+                // Update existing dashboard
+                await fetch(`/api/dashboards/${editingDashboardId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ Name: name })
+                });
+            } else {
+                // Create new dashboard
+                const res = await fetch('/api/dashboards', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ Name: name })
+                });
+                const dashboard = await res.json();
+                dashboardId = dashboard.ID;
+            }
+
+            // Delete existing graphs if editing (simpler than tracking changes)
+            if (editingDashboardId) {
+                const existingGraphs = await (await fetch(`/api/dashboards/${dashboardId}/graphs`)).json() || [];
+                for (const g of existingGraphs) {
+                    await fetch(`/api/dashboards/${dashboardId}/graphs/${g.ID}`, { method: 'DELETE' });
+                }
+            }
+
+            // Create all graphs
+            for (const g of graphs) {
+                await fetch(`/api/dashboards/${dashboardId}/graphs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(g)
+                });
+            }
+
+            alert('Dashboard saved successfully!');
+            window.location.href = '/dashboards/view?id=' + dashboardId;
+        } catch (err) {
+            alert('Error saving dashboard: ' + err.message);
+        }
+    }
+
+    init();
+</script>
+
+{{template "footer" .}}
