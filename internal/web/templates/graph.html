@@ -199,33 +199,37 @@
 
                         const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
 
-                        // Collect stops with their brightness
+                        // Faster falloff: use exponential curve
+                        // Edges very light (95%), median dark (35%)
                         let stops = [];
                         for (let i = 0; i <= 20; i++) {
                             const val = pValues[i];
                             const y = scales.y.getPixelForValue(val);
                             let stop = (y - topY) / (bottomY - topY);
-                            // Normalize stop: 0 at top (P99), 1 at bottom (P1)
                             stop = Math.max(0, Math.min(1, stop));
 
-                            const dist = Math.abs(i - 10);
-                            const brightness = Math.floor((dist / 10) * 200);
-                            stops.push({ stop, brightness });
+                            // Distance from median (i=10) with exponential falloff
+                            const dist = Math.abs(i - 10) / 10; // 0 at median, 1 at edges
+                            // Exponential curve: higher = slower falloff near center
+                            const curve = Math.pow(dist, 0.7); // 0.7 = gradual falloff
+                            const lightness = 25 + curve * 65; // 25% (dark) to 90% (light)
+                            const alpha = 1.0 * (1 - curve * 0.5); // Fade alpha at edges
+                            stops.push({ stop, lightness, alpha });
                         }
 
                         // Sort stops by offset ascending
                         stops.sort((a, b) => a.stop - b.stop);
 
-                        // Deduplicate stops at same position, keeping the darkest (min brightness)
+                        // Deduplicate stops at same position, keeping the darkest
                         let uniqueStops = [];
                         if (stops.length > 0) {
                             let current = stops[0];
                             for (let i = 1; i < stops.length; i++) {
                                 const next = stops[i];
                                 if (Math.abs(next.stop - current.stop) < 1e-5) {
-                                    // Merge: keep darker
-                                    if (next.brightness < current.brightness) {
-                                        current.brightness = next.brightness;
+                                    // Keep darker one
+                                    if (next.lightness < current.lightness) {
+                                        current = next;
                                     }
                                 } else {
                                     uniqueStops.push(current);
@@ -236,7 +240,9 @@
                         }
 
                         uniqueStops.forEach(s => {
-                            gradient.addColorStop(s.stop, `rgba(${s.brightness}, ${s.brightness}, ${s.brightness}, 1)`);
+                            // Convert lightness to grayscale RGB (for single-target view, keep grayscale)
+                            const gray = Math.floor(255 * (s.lightness / 100));
+                            gradient.addColorStop(s.stop, `rgba(${gray}, ${gray}, ${gray}, ${s.alpha})`);
                         });
                         return gradient;
                     }
@@ -290,6 +296,38 @@
                         ctx.fillRect(x - width / 2, chartArea.top, width, chartArea.bottom - chartArea.top);
                         ctx.restore();
                     }
+                }
+            };
+
+            // Median line plugin - draws a 3px line at P50 for each bar
+            const medianLinePlugin = {
+                id: 'medianLine',
+                afterDatasetsDraw: (chart) => {
+                    const meta = chart.getDatasetMeta(0);
+                    if (!meta) return;
+
+                    const { ctx, scales } = chart;
+
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+                    ctx.lineWidth = 3;
+
+                    data.forEach((d, idx) => {
+                        if (!d || d.ProbeCount === 0) return;
+                        const bar = meta.data[idx];
+                        if (!bar) return;
+
+                        const medianVal = (d.P50 || 0) / 1000000;
+                        const medianY = scales.y.getPixelForValue(medianVal);
+                        const width = bar.width;
+                        const x = bar.x - width / 2;
+
+                        ctx.beginPath();
+                        ctx.moveTo(x, medianY);
+                        ctx.lineTo(x + width, medianY);
+                        ctx.stroke();
+                    });
+                    ctx.restore();
                 }
             };
 
@@ -422,7 +460,7 @@
                         }
                     },
                 },
-                plugins: [backgroundPlugin, hoverHighlightPlugin]
+                plugins: [backgroundPlugin, hoverHighlightPlugin, medianLinePlugin]
             });
 
         } else {

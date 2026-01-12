@@ -335,10 +335,10 @@
 
                                 // Distance from median (j=10) with exponential falloff
                                 const dist = Math.abs(j - 10) / 10; // 0 at median, 1 at edges
-                                // Exponential curve: fast rise from median
-                                const curve = Math.pow(dist, 0.4); // < 1 = faster falloff near center
-                                const lightness = 35 + curve * 60; // 35% (dark) to 95% (very light)
-                                const stopAlpha = alpha * (1 - curve * 0.6); // Fade alpha too at edges
+                                // Exponential curve: higher = slower falloff near center
+                                const curve = Math.pow(dist, 0.7); // 0.7 = gradual falloff
+                                const lightness = 25 + curve * 65; // 25% (dark) to 90% (light)
+                                const stopAlpha = alpha * (1 - curve * 0.5); // Fade alpha at edges
                                 stops.push({ stop, lightness, alpha: stopAlpha });
                             }
 
