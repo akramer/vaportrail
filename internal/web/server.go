@@ -533,46 +533,49 @@ func (s StatusPageData) DBSizeString() string {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	dbSize, err := s.db.GetDBSizeBytes()
-	log.Printf("GetDBSizeBytes took %v", time.Since(start))
+	dbSizeDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get DB size: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	start = time.Now()
 	pageCount, err := s.db.GetPageCount()
-	log.Printf("GetPageCount took %v", time.Since(start))
+	pageCountDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get page count: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	start = time.Now()
 	pageSize, err := s.db.GetPageSize()
-	log.Printf("GetPageSize took %v", time.Since(start))
+	pageSizeDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get page size: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	start = time.Now()
 	freelistCount, err := s.db.GetFreelistCount()
-	log.Printf("GetFreelistCount took %v", time.Since(start))
+	freelistCountDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get freelist count: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	start = time.Now()
 	tdStats, err := s.db.GetTDigestStats()
-	log.Printf("GetTDigestStats took %v", time.Since(start))
+	tdStatsDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get tdigest stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	start = time.Now()
 	rawStats, err := s.db.GetRawStats()
-	log.Printf("GetRawStats took %v", time.Since(start))
+	rawStatsDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get raw stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Status Page Timings: DBSize=%v PageCount=%v PageSize=%v FreelistCount=%v TDigestStats=%v RawStats=%v",
+		dbSizeDuration, pageCountDuration, pageSizeDuration, freelistCountDuration, tdStatsDuration, rawStatsDuration)
 
 	data := StatusPageData{
 		Name:          "System Status",
