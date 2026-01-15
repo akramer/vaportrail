@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -530,36 +531,51 @@ func (s StatusPageData) DBSizeString() string {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	dbSize, err := s.db.GetDBSizeBytes()
+	dbSizeDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get DB size: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	start = time.Now()
 	pageCount, err := s.db.GetPageCount()
+	pageCountDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get page count: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	start = time.Now()
 	pageSize, err := s.db.GetPageSize()
+	pageSizeDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get page size: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	start = time.Now()
 	freelistCount, err := s.db.GetFreelistCount()
+	freelistCountDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get freelist count: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	start = time.Now()
 	tdStats, err := s.db.GetTDigestStats()
+	tdStatsDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get tdigest stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	start = time.Now()
 	rawStats, err := s.db.GetRawStats()
+	rawStatsDuration := time.Since(start)
 	if err != nil {
 		http.Error(w, "Failed to get raw stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Status Page Timings: DBSize=%v PageCount=%v PageSize=%v FreelistCount=%v TDigestStats=%v RawStats=%v",
+		dbSizeDuration, pageCountDuration, pageSizeDuration, freelistCountDuration, tdStatsDuration, rawStatsDuration)
 
 	data := StatusPageData{
 		Name:          "System Status",
