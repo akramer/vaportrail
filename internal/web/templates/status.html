@@ -93,4 +93,14 @@
     </div>
 </div>
 
+<div class="mt-4 text-center text-muted small">
+    Status Generation Timings:
+    DBSize: {{.Timings.DBSize}} &bull;
+    PageCount: {{.Timings.PageCount}} &bull;
+    PageSize: {{.Timings.PageSize}} &bull;
+    FreelistCount: {{.Timings.FreelistCount}} &bull;
+    TDigestStats: {{.Timings.TDigestStats}} &bull;
+    RawStats: {{.Timings.RawStats}}
+</div>
+
 {{template "footer" .}}

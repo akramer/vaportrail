@@ -507,6 +507,15 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type StatusPageTimings struct {
+	DBSize        time.Duration
+	PageCount     time.Duration
+	PageSize      time.Duration
+	FreelistCount time.Duration
+	TDigestStats  time.Duration
+	RawStats      time.Duration
+}
+
 type StatusPageData struct {
 	Name          string
 	DBSize        int64
@@ -515,6 +524,7 @@ type StatusPageData struct {
 	FreelistCount int64
 	TDigestStats  []db.TDigestStat
 	RawStats      *db.RawStats
+	Timings       StatusPageTimings
 }
 
 func (s StatusPageData) DBSizeString() string {
@@ -585,6 +595,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		FreelistCount: freelistCount,
 		TDigestStats:  tdStats,
 		RawStats:      rawStats,
+		Timings: StatusPageTimings{
+			DBSize:        dbSizeDuration,
+			PageCount:     pageCountDuration,
+			PageSize:      pageSizeDuration,
+			FreelistCount: freelistCountDuration,
+			TDigestStats:  tdStatsDuration,
+			RawStats:      rawStatsDuration,
+		},
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
