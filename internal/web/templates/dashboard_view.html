@@ -31,6 +31,10 @@
         <option value="heatmap">Heatmap</option>
         <option value="line">Line Chart</option>
     </select>
+    <span style="margin-left: 20px;">
+        <input type="checkbox" id="log-scale" onchange="updateAllGraphs()">
+        <label for="log-scale">Log Scale</label>
+    </span>
 </div>
 
 <div id="graphs-container"></div>
@@ -286,11 +290,14 @@
                 const barData = data.map(d => {
                     const timeMs = new Date(d.Time).getTime();
                     const windowMs = (d.WindowSeconds || 60) * 1000;
+                    // Percentiles array: index 0=P0, 1=P5, 2=P10, ... 19=P95, 20=P100 (in nanoseconds)
+                    const p5 = d.Percentiles && d.Percentiles.length === 21 ? d.Percentiles[1] : (d.P0 || d.MinNS);
+                    const p95 = d.Percentiles && d.Percentiles.length === 21 ? d.Percentiles[19] : (d.P100 || d.MaxNS);
                     return {
                         x: timeMs + windowMs / 2,
                         y: [
-                            (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : (d.P0 !== undefined && d.P0 !== 0 ? d.P0 : d.MinNS)) / 1000000,
-                            (d.P99 !== undefined && d.P99 !== 0 ? d.P99 : (d.P100 !== undefined && d.P100 !== 0 ? d.P100 : d.MaxNS)) / 1000000
+                            p5 / 1000000,
+                            p95 / 1000000
                         ],
                         originalTime: d.Time,
                         originalData: d,
@@ -315,10 +322,13 @@
                         const alpha = 0.7; // Translucency for overlapping
 
                         if (d.Percentiles && d.Percentiles.length === 21) {
+                            // pValues are in milliseconds (converted from nanoseconds)
                             const pValues = d.Percentiles.map(v => v / 1000000);
-                            const p1Val = (d.P1 !== undefined && d.P1 !== 0 ? d.P1 : pValues[0]) / 1000000;
-                            const topY = scales.y.getPixelForValue((d.P99 || pValues[20]) / 1000000);
-                            const bottomY = scales.y.getPixelForValue((d.P1 || pValues[0]) / 1000000);
+                            // P5 is at index 1, P95 is at index 19
+                            const p5Val = pValues[1];
+                            const p95Val = pValues[19];
+                            const topY = scales.y.getPixelForValue(p95Val);
+                            const bottomY = scales.y.getPixelForValue(p5Val);
 
                             if (Math.abs(topY - bottomY) < 0.1) return `hsla(${hue}, 90%, 40%, ${alpha})`;
 
@@ -326,15 +336,17 @@
 
                             // Faster falloff: use exponential curve
                             // Edges very light (95%), median dark (35%)
+                            // Only use P5-P95 range (indices 1-19) since bar now spans P5-P95
                             let stops = [];
-                            for (let j = 0; j <= 20; j++) {
+                            for (let j = 1; j <= 19; j++) {
                                 const val = pValues[j];
                                 const y = scales.y.getPixelForValue(val);
                                 let stop = (y - topY) / (bottomY - topY);
                                 stop = Math.max(0, Math.min(1, stop));
 
                                 // Distance from median (j=10) with exponential falloff
-                                const dist = Math.abs(j - 10) / 10; // 0 at median, 1 at edges
+                                // Range is now 1-19, so max distance is 9 (at j=1 or j=19)
+                                const dist = Math.abs(j - 10) / 9; // 0 at median, 1 at edges
                                 // Exponential curve: higher = slower falloff near center
                                 const curve = Math.pow(dist, 0.7); // 0.7 = gradual falloff
                                 const lightness = 25 + curve * 65; // 25% (dark) to 90% (light)
@@ -437,6 +449,24 @@
                 }
             }
 
+            // Calculate percentile-based Y-axis max (95th percentile of all P95 values across all targets)
+            // Percentiles[19] = P95 in nanoseconds
+            const allP95Values = [];
+            for (const { data } of allData) {
+                for (const d of data) {
+                    if (d.Percentiles && d.Percentiles.length === 21) {
+                        const val = d.Percentiles[19] / 1e6;
+                        if (val > 0) allP95Values.push(val);
+                    }
+                }
+            }
+            allP95Values.sort((a, b) => a - b);
+            const suggestedYMax = allP95Values.length > 0
+                ? allP95Values[Math.floor(allP95Values.length * 0.95)] * 1.1
+                : undefined;
+
+            const useLogScale = document.getElementById('log-scale').checked;
+
             chartInstances[graph.ID] = new Chart(chartCtx, {
                 type: 'bar',
                 data: { datasets: datasets },
@@ -453,7 +483,13 @@
                             max: range.end.toISOString(),
                             offset: false
                         },
-                        y: { type: 'linear', display: true, title: { display: true, text: 'Latency (ms)' } }
+                        y: {
+                            type: useLogScale ? 'logarithmic' : 'linear',
+                            display: true,
+                            title: { display: true, text: 'Latency (ms)' },
+                            min: useLogScale ? undefined : 0,
+                            max: useLogScale ? undefined : suggestedYMax
+                        }
                     },
                     plugins: {
                         zoom: {
