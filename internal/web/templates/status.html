@@ -93,4 +93,50 @@
     </div>
 </div>
 
+<div class="row mt-4">
+    <div class="col">
+        <div class="card">
+            <div class="card-header">
+                Processing Timings
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Operation</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Get DB Size</td>
+                            <td>{{.Timings.DBSize}}</td>
+                        </tr>
+                        <tr>
+                            <td>Get Page Count</td>
+                            <td>{{.Timings.PageCount}}</td>
+                        </tr>
+                        <tr>
+                            <td>Get Page Size</td>
+                            <td>{{.Timings.PageSize}}</td>
+                        </tr>
+                        <tr>
+                            <td>Get Freelist Count</td>
+                            <td>{{.Timings.FreelistCount}}</td>
+                        </tr>
+                        <tr>
+                            <td>Get TDigest Stats</td>
+                            <td>{{.Timings.TDigestStats}}</td>
+                        </tr>
+                        <tr>
+                            <td>Get Raw Stats</td>
+                            <td>{{.Timings.RawStats}}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
 {{template "footer" .}}
