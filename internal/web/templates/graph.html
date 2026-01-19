@@ -381,14 +381,26 @@
                     interaction: { mode: 'index', intersect: false },
                     scales: {
                         x: {
-                            type: 'time', // Use time axis
-                            time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } },
+                            type: 'time',
+                            time: {
+                                displayFormats: {
+                                    millisecond: 'MMM d HH:mm:ss.SSS',
+                                    second: 'MMM d HH:mm:ss',
+                                    minute: 'MMM d HH:mm',
+                                    hour: 'MMM d HH:mm',
+                                    day: 'MMM d',
+                                    week: 'MMM d',
+                                    month: 'MMM yyyy',
+                                    year: 'yyyy'
+                                }
+                            },
                             grid: { display: false },
                             min: range.start.toISOString(),
                             max: range.end.toISOString(),
-                            offset: false, // Ensure no extra padding
+                            offset: false,
                             ticks: {
-                                // source: 'data' // Removing this to prevent ticks from using the shifted bar centers (e.g. 2:30 offsets)
+                                maxRotation: 45,
+                                minRotation: 0
                             }
                         },
                         xRaw: {
@@ -544,7 +556,26 @@
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     scales: {
-                        x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
+                        x: {
+                            type: 'time',
+                            time: {
+                                displayFormats: {
+                                    millisecond: 'MMM d HH:mm:ss.SSS',
+                                    second: 'MMM d HH:mm:ss',
+                                    minute: 'MMM d HH:mm',
+                                    hour: 'MMM d HH:mm',
+                                    day: 'MMM d',
+                                    week: 'MMM d',
+                                    month: 'MMM yyyy',
+                                    year: 'yyyy'
+                                }
+                            },
+                            grid: { display: false },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 0
+                            }
+                        },
                         y: { type: 'linear', display: true, position: 'left', beginAtZero: true },
                         y1: { type: 'linear', display: true, position: 'right', beginAtZero: true, min: 0, max: 100, grid: { drawOnChartArea: false } }
                     },

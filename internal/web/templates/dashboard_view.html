@@ -477,11 +477,26 @@
                     scales: {
                         x: {
                             type: 'time',
-                            time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } },
+                            time: {
+                                displayFormats: {
+                                    millisecond: 'MMM d HH:mm:ss.SSS',
+                                    second: 'MMM d HH:mm:ss',
+                                    minute: 'MMM d HH:mm',
+                                    hour: 'MMM d HH:mm',
+                                    day: 'MMM d',
+                                    week: 'MMM d',
+                                    month: 'MMM yyyy',
+                                    year: 'yyyy'
+                                }
+                            },
                             grid: { display: false },
                             min: range.start.toISOString(),
                             max: range.end.toISOString(),
-                            offset: false
+                            offset: false,
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 0
+                            }
                         },
                         y: {
                             type: useLogScale ? 'logarithmic' : 'linear',
@@ -573,7 +588,26 @@
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     scales: {
-                        x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' } }, grid: { display: false } },
+                        x: {
+                            type: 'time',
+                            time: {
+                                displayFormats: {
+                                    millisecond: 'MMM d HH:mm:ss.SSS',
+                                    second: 'MMM d HH:mm:ss',
+                                    minute: 'MMM d HH:mm',
+                                    hour: 'MMM d HH:mm',
+                                    day: 'MMM d',
+                                    week: 'MMM d',
+                                    month: 'MMM yyyy',
+                                    year: 'yyyy'
+                                }
+                            },
+                            grid: { display: false },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 0
+                            }
+                        },
                         y: { type: 'linear', display: true, position: 'left', beginAtZero: true, title: { display: true, text: 'Latency (ms)' } }
                     },
                     plugins: {
