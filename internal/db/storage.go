@@ -468,16 +468,37 @@ func (d *DB) GetFreelistCount() (int64, error) {
 }
 
 func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
+	// Query pre-computed stats from data_stats table
+	// stat_key format: 'agg:<target_id>:<window_seconds>'
+	// We need to extract target_id and window_seconds from the key
 	rows, err := d.Query(`
+		WITH parsed AS (
+			SELECT 
+				stat_key,
+				total_bytes,
+				row_count,
+				SUBSTR(stat_key, 5) as rest
+			FROM data_stats 
+			WHERE stat_key LIKE 'agg:%'
+		),
+		extracted AS (
+			SELECT 
+				stat_key,
+				total_bytes,
+				row_count,
+				CAST(SUBSTR(rest, 1, INSTR(rest, ':') - 1) AS INTEGER) as target_id,
+				CAST(SUBSTR(rest, INSTR(rest, ':') + 1) AS INTEGER) as window_seconds
+			FROM parsed
+		)
 		SELECT 
-			t.name, 
-			ar.window_seconds, 
-			SUM(LENGTH(ar.tdigest_data)) as total_bytes, 
-			COUNT(*) as count 
-		FROM aggregated_results ar
-		JOIN targets t ON ar.target_id = t.id
-		GROUP BY t.id, ar.window_seconds
-		ORDER BY total_bytes DESC
+			t.name,
+			e.window_seconds,
+			e.total_bytes,
+			e.row_count
+		FROM extracted e
+		JOIN targets t ON e.target_id = t.id
+		WHERE e.row_count > 0
+		ORDER BY e.total_bytes DESC
 	`)
 	if err != nil {
 		return nil, err
@@ -499,29 +520,23 @@ func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
 }
 
 func (d *DB) GetRawStats() (*RawStats, error) {
-	// Estimate size:
-	// time (datetime string) ~30 bytes
-	// target_id (int) ~8 bytes
-	// latency (float) ~8 bytes
-	// overhead ~ overhead
-	// Or use length(time) + length(latency)? latency is real.
-	// SQLite store:
-	// time: TEXT (RFC3339Nano) ~ 35 bytes?
-	// target_id: INTEGER
-	// latency: REAL
-	var count int64
-	// Just counting rows for now and estimating size.
-	if err := d.QueryRow("SELECT COUNT(*) FROM raw_results").Scan(&count); err != nil {
+	// Query pre-computed stats from data_stats table
+	var count, totalBytes int64
+	err := d.QueryRow(`
+		SELECT COALESCE(row_count, 0), COALESCE(total_bytes, 0) 
+		FROM data_stats 
+		WHERE stat_key = 'raw_count'
+	`).Scan(&count, &totalBytes)
+	if err == sql.ErrNoRows {
+		// No stats yet (empty table)
+		return &RawStats{Count: 0, TotalBytes: 0}, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-
-	// Better estimation query if we want to be closer:
-	// sum(payload) isn't easy without iterating or complex generic sql.
-	// But calculating size of time string is possible.
-	// Let's approximate: 50 bytes per row.
 	return &RawStats{
 		Count:      count,
-		TotalBytes: count * 50,
+		TotalBytes: totalBytes,
 	}, nil
 }
 
