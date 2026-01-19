@@ -578,7 +578,7 @@ const VaporTrail = (function () {
                     zoom: {
                         wheel: {
                             enabled: true,
-                            speed: 0.1
+                            speed: 0.02
                         },
                         drag: {
                             enabled: true,
@@ -767,7 +767,7 @@ const VaporTrail = (function () {
                     zoom: {
                         wheel: {
                             enabled: true,
-                            speed: 0.1
+                            speed: 0.02
                         },
                         drag: {
                             enabled: true,
