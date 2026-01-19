@@ -31,6 +31,9 @@ const VaporTrail = (function () {
         year: 'yyyy'
     };
 
+    // Debounce timer for zoom events (shared across all charts)
+    let zoomDebounceTimer = null;
+
     // ============================================
     // DATA PROCESSING
     // ============================================
@@ -540,10 +543,14 @@ const VaporTrail = (function () {
                         },
                         mode: 'x',
                         onZoomComplete: function ({ chart }) {
-                            if (onZoomComplete) {
-                                const { min, max } = chart.scales.x;
-                                onZoomComplete(new Date(min), new Date(max));
-                            }
+                            // Debounce zoom callback to avoid rapid reloads during wheel zoom
+                            clearTimeout(zoomDebounceTimer);
+                            zoomDebounceTimer = setTimeout(function () {
+                                if (onZoomComplete) {
+                                    const { min, max } = chart.scales.x;
+                                    onZoomComplete(new Date(min), new Date(max));
+                                }
+                            }, 1000);
                         }
                     }
                 },
@@ -725,10 +732,14 @@ const VaporTrail = (function () {
                         },
                         mode: 'x',
                         onZoomComplete: function ({ chart }) {
-                            if (onZoomComplete) {
-                                const { min, max } = chart.scales.x;
-                                onZoomComplete(new Date(min), new Date(max));
-                            }
+                            // Debounce zoom callback to avoid rapid reloads during wheel zoom
+                            clearTimeout(zoomDebounceTimer);
+                            zoomDebounceTimer = setTimeout(function () {
+                                if (onZoomComplete) {
+                                    const { min, max } = chart.scales.x;
+                                    onZoomComplete(new Date(min), new Date(max));
+                                }
+                            }, 1000);
                         }
                     }
                 },

@@ -694,7 +694,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 	}
 
-	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate") // No caching for development
 	w.Write(data)
 }
 
