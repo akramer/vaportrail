@@ -519,8 +519,25 @@ const VaporTrail = (function () {
             },
             plugins: {
                 zoom: {
+                    pan: {
+                        enabled: true,
+                        mode: 'x',
+                        onPanComplete: function ({ chart }) {
+                            if (onZoomComplete) {
+                                const { min, max } = chart.scales.x;
+                                onZoomComplete(new Date(min), new Date(max));
+                            }
+                        }
+                    },
                     zoom: {
-                        drag: { enabled: true },
+                        wheel: {
+                            enabled: true,
+                            speed: 0.1
+                        },
+                        drag: {
+                            enabled: true,
+                            modifierKey: 'shift'
+                        },
                         mode: 'x',
                         onZoomComplete: function ({ chart }) {
                             if (onZoomComplete) {
@@ -687,8 +704,25 @@ const VaporTrail = (function () {
             },
             plugins: {
                 zoom: {
+                    pan: {
+                        enabled: true,
+                        mode: 'x',
+                        onPanComplete: function ({ chart }) {
+                            if (onZoomComplete) {
+                                const { min, max } = chart.scales.x;
+                                onZoomComplete(new Date(min), new Date(max));
+                            }
+                        }
+                    },
                     zoom: {
-                        drag: { enabled: true },
+                        wheel: {
+                            enabled: true,
+                            speed: 0.1
+                        },
+                        drag: {
+                            enabled: true,
+                            modifierKey: 'shift'
+                        },
                         mode: 'x',
                         onZoomComplete: function ({ chart }) {
                             if (onZoomComplete) {
