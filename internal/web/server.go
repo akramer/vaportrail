@@ -126,6 +126,7 @@ func (s *Server) routes() {
 	s.router.Get("/graph/{id}", s.handleGraph)
 	s.router.Get("/status", s.handleStatus)
 	s.router.Get("/favicon.png", s.handleFavicon)
+	s.router.Get("/static/*", s.handleStatic)
 
 	// Dashboard routes
 	s.router.Get("/api/dashboards", s.handleGetDashboards)
@@ -664,6 +665,36 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=604800") // Cache for 1 week
+	w.Write(data)
+}
+
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	// Get the path after /static/
+	path := chi.URLParam(r, "*")
+	if path == "" {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+
+	data, err := staticFS.ReadFile("static/" + path)
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+
+	// Set Content-Type based on file extension
+	switch {
+	case len(path) > 3 && path[len(path)-3:] == ".js":
+		w.Header().Set("Content-Type", "application/javascript")
+	case len(path) > 4 && path[len(path)-4:] == ".css":
+		w.Header().Set("Content-Type", "text/css")
+	case len(path) > 4 && path[len(path)-4:] == ".png":
+		w.Header().Set("Content-Type", "image/png")
+	case len(path) > 4 && path[len(path)-4:] == ".svg":
+		w.Header().Set("Content-Type", "image/svg+xml")
+	}
+
+	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
 	w.Write(data)
 }
 
