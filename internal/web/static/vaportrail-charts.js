@@ -584,6 +584,9 @@ const VaporTrail = (function () {
                             enabled: true,
                             modifierKey: 'shift'
                         },
+                        pinch: {
+                            enabled: true
+                        },
                         mode: 'x',
                         onZoomComplete: function ({ chart }) {
                             // Debounce zoom callback to avoid rapid reloads during wheel zoom
@@ -772,6 +775,9 @@ const VaporTrail = (function () {
                         drag: {
                             enabled: true,
                             modifierKey: 'shift'
+                        },
+                        pinch: {
+                            enabled: true
                         },
                         mode: 'x',
                         onZoomComplete: function ({ chart }) {
