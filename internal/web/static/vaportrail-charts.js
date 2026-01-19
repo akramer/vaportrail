@@ -71,7 +71,7 @@ const VaporTrail = (function () {
                 x: timeMs + windowMs / 2, // Shift right by half window to align start
                 y: [p5 / 1000000, p95 / 1000000],
                 originalTime: d.Time,
-                originalData: d,
+                originalData: d,  // Full original data for bar width calculation
                 targetId: options.targetId
             };
         });
@@ -173,6 +173,43 @@ const VaporTrail = (function () {
                     ctx.fillRect(x - width / 2, chartArea.top, width, chartArea.bottom - chartArea.top);
                     ctx.restore();
                 }
+            }
+        };
+    }
+
+    /**
+     * Create bar width fix plugin - ensures bars have exact pixel widths based on time window
+     * This prevents gaps when zoomed in and overlap when zoomed out
+     */
+    function createBarWidthFixPlugin() {
+        return {
+            id: 'barWidthFix',
+            beforeDatasetsDraw: (chart) => {
+                const xScale = chart.scales.x;
+                if (!xScale) return;
+
+                chart.data.datasets.forEach((dataset, datasetIndex) => {
+                    if (chart.config.type !== 'bar') return;
+                    const meta = chart.getDatasetMeta(datasetIndex);
+                    if (meta.type !== 'bar') return;
+
+                    meta.data.forEach((bar, index) => {
+                        const dataPoint = dataset.data[index];
+                        if (!dataPoint || !dataPoint.originalData) return;
+
+                        const windowMs = (dataPoint.originalData.WindowSeconds || 60) * 1000;
+                        const centerTime = dataPoint.x;
+                        const startTime = centerTime - windowMs / 2;
+                        const endTime = centerTime + windowMs / 2;
+
+                        const startPixel = xScale.getPixelForValue(startTime);
+                        const endPixel = xScale.getPixelForValue(endTime);
+                        const exactWidth = Math.abs(endPixel - startPixel);
+
+                        // Set the exact width on the bar element
+                        bar.width = exactWidth;
+                    });
+                });
             }
         };
     }
@@ -440,6 +477,11 @@ const VaporTrail = (function () {
                     pluginId: `medianLine_${i}_${targetId}`
                 }));
 
+                // Add bar width fix plugin once (for first dataset)
+                if (i === 0) {
+                    plugins.push(createBarWidthFixPlugin());
+                }
+
                 if (i === 0) {
                     plugins.push(createTimeoutBackgroundPlugin(targetData, 0));
                 }
@@ -491,6 +533,7 @@ const VaporTrail = (function () {
             plugins.push(createTimeoutBackgroundPlugin(data));
             plugins.push(createHoverHighlightPlugin());
             plugins.push(createMedianLinePlugin(data));
+            plugins.push(createBarWidthFixPlugin());
         }
 
         // Calculate Y-axis max
