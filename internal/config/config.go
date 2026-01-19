@@ -1,6 +1,7 @@
 package config
 
 import (
+	"flag"
 	"os"
 	"strconv"
 )
@@ -22,11 +23,12 @@ func DefaultConfig() *ServerConfig {
 	}
 }
 
-// Load loads the configuration from environment variables,
-// falling back to default values if not specified.
+// Load loads the configuration from command-line flags and environment variables.
+// Priority order: command-line flags > environment variables > defaults.
 func Load() *ServerConfig {
 	cfg := DefaultConfig()
 
+	// Apply environment variables first
 	if portStr := os.Getenv("VAPORTRAIL_HTTP_PORT"); portStr != "" {
 		if port, err := strconv.Atoi(portStr); err == nil {
 			cfg.HTTPPort = port
@@ -36,6 +38,16 @@ func Load() *ServerConfig {
 	if dbPath := os.Getenv("VAPORTRAIL_DB_PATH"); dbPath != "" {
 		cfg.DBPath = dbPath
 	}
+
+	// Define command-line flags (using env/default values as the flag defaults)
+	portFlag := flag.Int("port", cfg.HTTPPort, "HTTP server port (env: VAPORTRAIL_HTTP_PORT)")
+	dbFlag := flag.String("db", cfg.DBPath, "SQLite database path (env: VAPORTRAIL_DB_PATH)")
+
+	flag.Parse()
+
+	// Apply command-line flags (they override env values if explicitly set)
+	cfg.HTTPPort = *portFlag
+	cfg.DBPath = *dbFlag
 
 	return cfg
 }
