@@ -358,3 +358,109 @@ func TestGetStatsFromDataStats(t *testing.T) {
 		t.Errorf("Expected 3600s window total bytes 700, got %d", stat3600.TotalBytes)
 	}
 }
+
+func TestTDigestStats_EstimatedTotalBytes(t *testing.T) {
+	d, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create db: %v", err)
+	}
+	defer d.Close()
+
+	// Add target with retention policies
+	// Window 60s with 6 months (15768000s) retention
+	// Window 3600s with 10 years (315360000s) retention
+	retentionPolicies := `[{"window":60,"retention":15768000},{"window":3600,"retention":315360000}]`
+	target := &Target{
+		Name:              "RetentionTest",
+		Address:           "test",
+		ProbeType:         "http",
+		RetentionPolicies: retentionPolicies,
+	}
+	id, err := d.AddTarget(target)
+	if err != nil {
+		t.Fatalf("AddTarget failed: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Add aggregated results for 60s window with 100 byte blobs
+	for i := 0; i < 10; i++ {
+		blob := make([]byte, 100)
+		agg := &AggregatedResult{
+			Time:          now.Add(time.Duration(i) * time.Minute),
+			TargetID:      id,
+			WindowSeconds: 60,
+			TDigestData:   blob,
+		}
+		d.AddAggregatedResult(agg)
+	}
+
+	// Add aggregated results for 3600s window with 200 byte blobs
+	for i := 0; i < 5; i++ {
+		blob := make([]byte, 200)
+		agg := &AggregatedResult{
+			Time:          now.Add(time.Duration(i) * time.Hour),
+			TargetID:      id,
+			WindowSeconds: 3600,
+			TDigestData:   blob,
+		}
+		d.AddAggregatedResult(agg)
+	}
+
+	// Verify GetTDigestStats returns correct estimate
+	tdStats, err := d.GetTDigestStats()
+	if err != nil {
+		t.Fatalf("GetTDigestStats failed: %v", err)
+	}
+	if len(tdStats) != 2 {
+		t.Fatalf("Expected 2 tdigest stats, got %d", len(tdStats))
+	}
+
+	// Find the stats by window
+	var stat60, stat3600 *TDigestStat
+	for i := range tdStats {
+		if tdStats[i].WindowSeconds == 60 {
+			stat60 = &tdStats[i]
+		} else if tdStats[i].WindowSeconds == 3600 {
+			stat3600 = &tdStats[i]
+		}
+	}
+
+	// Verify 60s window stats
+	if stat60 == nil {
+		t.Fatal("60s window stat not found")
+	}
+	if stat60.TargetID != id {
+		t.Errorf("Expected TargetID %d, got %d", id, stat60.TargetID)
+	}
+	if stat60.RetentionSeconds != 15768000 {
+		t.Errorf("Expected RetentionSeconds 15768000 (6 months), got %d", stat60.RetentionSeconds)
+	}
+	if stat60.AvgBytes != 100 {
+		t.Errorf("Expected AvgBytes 100, got %f", stat60.AvgBytes)
+	}
+	// EstimatedTotalBytes = (15768000 / 60) * 100 = 262800 * 100 = 26280000
+	expectedEstimate60 := int64(26280000)
+	if stat60.EstimatedTotalBytes != expectedEstimate60 {
+		t.Errorf("Expected EstimatedTotalBytes %d, got %d", expectedEstimate60, stat60.EstimatedTotalBytes)
+	}
+
+	// Verify 3600s window stats
+	if stat3600 == nil {
+		t.Fatal("3600s window stat not found")
+	}
+	if stat3600.TargetID != id {
+		t.Errorf("Expected TargetID %d, got %d", id, stat3600.TargetID)
+	}
+	if stat3600.RetentionSeconds != 315360000 {
+		t.Errorf("Expected RetentionSeconds 315360000 (10 years), got %d", stat3600.RetentionSeconds)
+	}
+	if stat3600.AvgBytes != 200 {
+		t.Errorf("Expected AvgBytes 200, got %f", stat3600.AvgBytes)
+	}
+	// EstimatedTotalBytes = (315360000 / 3600) * 200 = 87600 * 200 = 17520000
+	expectedEstimate3600 := int64(17520000)
+	if stat3600.EstimatedTotalBytes != expectedEstimate3600 {
+		t.Errorf("Expected EstimatedTotalBytes %d, got %d", expectedEstimate3600, stat3600.EstimatedTotalBytes)
+	}
+}

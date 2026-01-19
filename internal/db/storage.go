@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -62,11 +63,14 @@ type Store interface {
 }
 
 type TDigestStat struct {
-	TargetName    string
-	WindowSeconds int
-	TotalBytes    int64
-	Count         int64
-	AvgBytes      float64
+	TargetName          string
+	TargetID            int64
+	WindowSeconds       int
+	RetentionSeconds    int64
+	TotalBytes          int64
+	Count               int64
+	AvgBytes            float64
+	EstimatedTotalBytes int64
 }
 
 type RawStats struct {
@@ -471,6 +475,7 @@ func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
 	// Query pre-computed stats from data_stats table
 	// stat_key format: 'agg:<target_id>:<window_seconds>'
 	// We need to extract target_id and window_seconds from the key
+	// Also join with targets to get retention policies
 	rows, err := d.Query(`
 		WITH parsed AS (
 			SELECT 
@@ -492,9 +497,11 @@ func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
 		)
 		SELECT 
 			t.name,
+			e.target_id,
 			e.window_seconds,
 			e.total_bytes,
-			e.row_count
+			e.row_count,
+			COALESCE(t.retention_policies, '[]')
 		FROM extracted e
 		JOIN targets t ON e.target_id = t.id
 		WHERE e.row_count > 0
@@ -508,12 +515,35 @@ func (d *DB) GetTDigestStats() ([]TDigestStat, error) {
 	var stats []TDigestStat
 	for rows.Next() {
 		var s TDigestStat
-		if err := rows.Scan(&s.TargetName, &s.WindowSeconds, &s.TotalBytes, &s.Count); err != nil {
+		var retentionPoliciesJSON string
+		if err := rows.Scan(&s.TargetName, &s.TargetID, &s.WindowSeconds, &s.TotalBytes, &s.Count, &retentionPoliciesJSON); err != nil {
 			return nil, err
 		}
 		if s.Count > 0 {
 			s.AvgBytes = float64(s.TotalBytes) / float64(s.Count)
 		}
+
+		// Parse retention policies to find retention for this window
+		type retentionPolicy struct {
+			Window    int `json:"window"`
+			Retention int `json:"retention"`
+		}
+		var policies []retentionPolicy
+		json.Unmarshal([]byte(retentionPoliciesJSON), &policies)
+		for _, p := range policies {
+			if p.Window == s.WindowSeconds {
+				s.RetentionSeconds = int64(p.Retention)
+				break
+			}
+		}
+
+		// Calculate estimated total bytes based on retention
+		// EstimatedTotalBytes = (RetentionSeconds / WindowSeconds) * AvgBytes
+		if s.WindowSeconds > 0 && s.RetentionSeconds > 0 && s.AvgBytes > 0 {
+			estimatedBlobs := float64(s.RetentionSeconds) / float64(s.WindowSeconds)
+			s.EstimatedTotalBytes = int64(estimatedBlobs * s.AvgBytes)
+		}
+
 		stats = append(stats, s)
 	}
 	return stats, nil

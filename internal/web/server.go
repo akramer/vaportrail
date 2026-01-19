@@ -49,6 +49,52 @@ func New(cfg *config.ServerConfig, database *db.DB, sched *scheduler.Scheduler) 
 			}
 			return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 		},
+		"formatDuration": func(seconds int64) string {
+			if seconds <= 0 {
+				return "-"
+			}
+			const (
+				minute = 60
+				hour   = 60 * minute
+				day    = 24 * hour
+				month  = 30 * day
+				year   = 365 * day
+			)
+			switch {
+			case seconds >= year:
+				years := float64(seconds) / float64(year)
+				if years == float64(int(years)) {
+					return fmt.Sprintf("%dy", int(years))
+				}
+				return fmt.Sprintf("%.1fy", years)
+			case seconds >= month:
+				months := float64(seconds) / float64(month)
+				if months == float64(int(months)) {
+					return fmt.Sprintf("%dmo", int(months))
+				}
+				return fmt.Sprintf("%.1fmo", months)
+			case seconds >= day:
+				days := float64(seconds) / float64(day)
+				if days == float64(int(days)) {
+					return fmt.Sprintf("%dd", int(days))
+				}
+				return fmt.Sprintf("%.1fd", days)
+			case seconds >= hour:
+				hours := float64(seconds) / float64(hour)
+				if hours == float64(int(hours)) {
+					return fmt.Sprintf("%dh", int(hours))
+				}
+				return fmt.Sprintf("%.1fh", hours)
+			case seconds >= minute:
+				mins := float64(seconds) / float64(minute)
+				if mins == float64(int(mins)) {
+					return fmt.Sprintf("%dm", int(mins))
+				}
+				return fmt.Sprintf("%.1fm", mins)
+			default:
+				return fmt.Sprintf("%ds", seconds)
+			}
+		},
 		"printf": fmt.Sprintf,
 	}
 

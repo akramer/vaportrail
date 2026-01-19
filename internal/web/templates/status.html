@@ -71,9 +71,11 @@
                         <tr>
                             <th>Target</th>
                             <th>Window (s)</th>
+                            <th>Retention</th>
                             <th>Count</th>
                             <th>Total Size</th>
                             <th>Avg Size/Blob</th>
+                            <th>Est. Total Size</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -81,9 +83,11 @@
                         <tr>
                             <td>{{.TargetName}}</td>
                             <td>{{.WindowSeconds}}</td>
+                            <td>{{.RetentionSeconds | formatDuration}}</td>
                             <td>{{.Count}}</td>
                             <td>{{.TotalBytes | byteSize}}</td>
                             <td>{{.AvgBytes | printf "%.2f"}} bytes</td>
+                            <td>{{.EstimatedTotalBytes | byteSize}}</td>
                         </tr>
                         {{end}}
                     </tbody>
