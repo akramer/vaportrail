@@ -28,7 +28,9 @@ func DefaultConfig() *ServerConfig {
 func Load() *ServerConfig {
 	cfg := DefaultConfig()
 
-	// Apply environment variables first
+	// 1. Start with Defaults (already in cfg)
+
+	// 2. Override with Environment Variables
 	if portStr := os.Getenv("VAPORTRAIL_HTTP_PORT"); portStr != "" {
 		if port, err := strconv.Atoi(portStr); err == nil {
 			cfg.HTTPPort = port
@@ -39,15 +41,57 @@ func Load() *ServerConfig {
 		cfg.DBPath = dbPath
 	}
 
-	// Define command-line flags (using env/default values as the flag defaults)
-	portFlag := flag.Int("port", cfg.HTTPPort, "HTTP server port (env: VAPORTRAIL_HTTP_PORT)")
-	dbFlag := flag.String("db", cfg.DBPath, "SQLite database path (env: VAPORTRAIL_DB_PATH)")
+	// 3. Override with Flags
+	// We need to be careful with flags in tests to avoid "redefined" panics.
+	var portFlag int
+	var dbFlag string
 
-	flag.Parse()
+	fs := flag.CommandLine
 
-	// Apply command-line flags (they override env values if explicitly set)
-	cfg.HTTPPort = *portFlag
-	cfg.DBPath = *dbFlag
+	if fs.Lookup("port") == nil {
+		fs.IntVar(&portFlag, "port", 0, "HTTP server port (env: VAPORTRAIL_HTTP_PORT)")
+	}
+	if fs.Lookup("db") == nil {
+		fs.StringVar(&dbFlag, "db", "", "SQLite database path (env: VAPORTRAIL_DB_PATH)")
+	}
+
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	// Check if flags were actually set by the user
+	// This is a bit hacky with the default flag set, but standard for this simple pattern.
+	if p := fs.Lookup("port"); p != nil {
+		// If the flag was set (visited), use it.
+		// Or if we can detect it has a non-zero value and we used 0 as default.
+		// However, standard `flag` doesn't expose "was set" easily for the global set without looping Visit.
+
+		isSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "port" {
+				isSet = true
+			}
+		})
+
+		if isSet {
+			if val, err := strconv.Atoi(p.Value.String()); err == nil {
+				cfg.HTTPPort = val
+			}
+		}
+	}
+
+	if d := fs.Lookup("db"); d != nil {
+		isSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "db" {
+				isSet = true
+			}
+		})
+
+		if isSet {
+			cfg.DBPath = d.Value.String()
+		}
+	}
 
 	return cfg
 }
