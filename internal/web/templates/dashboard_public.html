@@ -142,9 +142,14 @@
             }
 
             async function init() {
-                const end = new Date();
-                const start = new Date(end.getTime() - 60 * 60 * 1000);
-                setInputs(start, end);
+                const urlParams = VaporTrail.getTimeParamsFromURL();
+                if (urlParams) {
+                    setInputs(urlParams.start, urlParams.end);
+                } else {
+                    const end = new Date();
+                    const start = new Date(end.getTime() - 60 * 60 * 1000);
+                    setInputs(start, end);
+                }
 
                 // Public dashboards don't need target name lookup - we won't show target names
                 window.targetsMap = {};
@@ -237,6 +242,11 @@
             }
 
             async function updateAllGraphs() {
+                const range = getInputs();
+                if (range) {
+                    VaporTrail.updateURLTimeParams(range.start, range.end);
+                }
+
                 const res = await fetch(`/public/${publicSlug}/graphs`);
                 const graphs = await res.json() || [];
                 for (const graph of graphs) {

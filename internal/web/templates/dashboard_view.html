@@ -165,10 +165,16 @@
     }
 
     async function init() {
-        // Initialize time range to last 1h
-        const end = new Date();
-        const start = new Date(end.getTime() - 60 * 60 * 1000);
-        setInputs(start, end);
+        // Initialize time range
+        const urlParams = VaporTrail.getTimeParamsFromURL();
+        if (urlParams) {
+            setInputs(urlParams.start, urlParams.end);
+        } else {
+            // Default to last 1h
+            const end = new Date();
+            const start = new Date(end.getTime() - 60 * 60 * 1000);
+            setInputs(start, end);
+        }
 
         // Initialize targets map (populated from graph data)
         window.targetsMap = {};
@@ -223,8 +229,16 @@
             publicBanner.style.display = 'none';
         }
 
-        // Update URL
-        history.pushState(null, '', '/dashboards/view?id=' + dashboardId);
+        // Update URL (preserve time params if they exist)
+        const currentUrl = new URL(window.location);
+        currentUrl.searchParams.set('id', dashboardId);
+        // Ensure we don't lose start/end if they are already in the URL or inputs
+        const range = getInputs();
+        if (range) {
+            currentUrl.searchParams.set('start', range.start.toISOString());
+            currentUrl.searchParams.set('end', range.end.toISOString());
+        }
+        history.pushState(null, '', currentUrl);
 
         // Load graphs
         const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
@@ -309,6 +323,8 @@
             targetsMap: window.targetsMap,
             onZoomComplete: function (start, end) {
                 setInputs(start, end);
+                VaporTrail.updateURLTimeParams(start, end); // NOTE: updateAllGraphs handles full state push, but this helper is convenient if we just wanted time.
+                // However, updateAllGraphs handles ID preservation too.
                 updateAllGraphs();
             }
         });
@@ -316,6 +332,18 @@
 
     async function updateAllGraphs() {
         if (!currentDashboardId) return;
+
+        // Sync to URL
+        const range = getInputs();
+        if (range) {
+            // Preserve dashboard ID in URL
+            const url = new URL(window.location);
+            url.searchParams.set('id', currentDashboardId);
+            url.searchParams.set('start', range.start.toISOString());
+            url.searchParams.set('end', range.end.toISOString());
+            window.history.pushState({}, '', url);
+        }
+
         const res = await fetch(`/api/dashboards/${currentDashboardId}/graphs`);
         const graphs = await res.json() || [];
         for (const graph of graphs) {

@@ -116,14 +116,22 @@
         loadChart();
     }
 
-    // Initialize with Last 1h
+    // Initialize
     window.addEventListener('load', () => {
-        setRange('1h');
+        const urlParams = VaporTrail.getTimeParamsFromURL();
+        if (urlParams) {
+            setInputs(urlParams.start, urlParams.end);
+            loadChart();
+        } else {
+            setRange('1h');
+        }
     });
 
     async function loadChart() {
         const range = getInputs();
         if (!range) return;
+
+        VaporTrail.updateURLTimeParams(range.start, range.end);
 
         // 1. Fetch Aggregated Data (Always)
         const aggUrl = '/api/results/' + targetID + '?start=' + range.start.toISOString() + '&end=' + range.end.toISOString();

@@ -31,6 +31,35 @@ const VaporTrail = (function () {
         year: 'yyyy'
     };
 
+    /**
+     * Get start/end time from URL parameters
+     * Returns null if not present
+     */
+    function getTimeParamsFromURL() {
+        const params = new URLSearchParams(window.location.search);
+        const start = params.get('start');
+        const end = params.get('end');
+        if (start && end) {
+            return {
+                start: new Date(start),
+                end: new Date(end)
+            };
+        }
+        return null;
+    }
+
+    /**
+     * Update URL parameters with new start/end time
+     * Uses pushState to avoid page reload
+     */
+    function updateURLTimeParams(start, end) {
+        if (!start || !end) return;
+        const url = new URL(window.location);
+        url.searchParams.set('start', start.toISOString());
+        url.searchParams.set('end', end.toISOString());
+        window.history.pushState({}, '', url);
+    }
+
     // Debounce timer for zoom events (shared across all charts)
     let zoomDebounceTimer = null;
 
@@ -850,6 +879,8 @@ const VaporTrail = (function () {
         createHoverHighlightPlugin,
         createHeatmapGradient,
         createExternalTooltipHandler,
-        renderLatencyChart
+        renderLatencyChart,
+        getTimeParamsFromURL,
+        updateURLTimeParams
     };
 })();

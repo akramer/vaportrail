@@ -232,6 +232,13 @@
 
     // Initialize time inputs
     function initTimeInputs() {
+        // Check URL first
+        const urlParams = VaporTrail.getTimeParamsFromURL();
+        if (urlParams) {
+            setTimeInputs(urlParams.start, urlParams.end);
+            return;
+        }
+
         const end = new Date();
         const start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
         setTimeInputs(start, end);
@@ -258,6 +265,10 @@
     }
 
     function updateTimeRange() {
+        const range = getTimeRange();
+        if (range) {
+            VaporTrail.updateURLTimeParams(range.start, range.end);
+        }
         // Reload all charts with new time range
         for (const t of currentTargets) {
             loadChart(t.ID, 'chart-' + t.ID);
@@ -265,7 +276,9 @@
     }
 
     function resetTimeRange() {
-        initTimeInputs();
+        const end = new Date();
+        const start = new Date(end.getTime() - 60 * 60 * 1000); // Last 1 hour
+        setTimeInputs(start, end);
         updateTimeRange();
     }
 
@@ -418,7 +431,8 @@
             mode: currentGraphMode,
             onZoomComplete: function (start, end) {
                 setTimeInputs(start, end);
-                updateTimeRange();
+                VaporTrail.updateURLTimeParams(start, end);
+                updateTimeRange(); // Ensure graphs reload if needed, though they might update internally
             }
         });
     }
