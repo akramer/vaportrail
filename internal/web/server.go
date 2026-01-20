@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -144,6 +145,8 @@ func (s *Server) routes() {
 
 	// Public dashboard routes
 	s.router.Get("/public/{slug}", s.handlePublicDashboard)
+	s.router.Get("/public/{slug}/graphs", s.handlePublicDashboardGraphs)
+	s.router.Get("/public/{slug}/results/{targetId}", s.handlePublicDashboardResults)
 	s.router.Post("/api/dashboards/{id}/regenerate-slug", s.handleRegenerateDashboardSlug)
 }
 
@@ -968,4 +971,84 @@ func (s *Server) handleRegenerateDashboardSlug(w http.ResponseWriter, r *http.Re
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"slug": slug})
+}
+
+func (s *Server) handlePublicDashboardGraphs(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	dash, err := s.db.GetDashboardBySlug(slug)
+	if err != nil {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	graphs, err := s.db.GetDashboardGraphs(dash.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(graphs)
+}
+
+func (s *Server) handlePublicDashboardResults(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	targetIdStr := chi.URLParam(r, "targetId")
+
+	if slug == "" {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	targetId, err := strconv.ParseInt(targetIdStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid target ID", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the dashboard exists and is public
+	dash, err := s.db.GetDashboardBySlug(slug)
+	if err != nil {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	// Verify the target is part of this dashboard
+	graphs, err := s.db.GetDashboardGraphs(dash.ID)
+	if err != nil {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	targetAllowed := false
+	for _, g := range graphs {
+		for _, tid := range g.TargetIDs {
+			if tid == targetId {
+				targetAllowed = true
+				break
+			}
+		}
+		if targetAllowed {
+			break
+		}
+	}
+
+	if !targetAllowed {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	// Reuse existing results logic - pass the request to handleGetResults
+	// But we need to set the URL param for the ID
+	// Create a new request context with the target ID
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", targetIdStr)
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+
+	s.handleGetResults(w, r)
 }

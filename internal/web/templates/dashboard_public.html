@@ -100,6 +100,7 @@
 
         <script>
             const dashboardId = {{.ID }};
+            const publicSlug = '{{.PublicSlug}}';
             let currentGraphMode = 'heatmap';
             let chartInstances = {};
 
@@ -145,18 +146,14 @@
                 const start = new Date(end.getTime() - 60 * 60 * 1000);
                 setInputs(start, end);
 
-                const targetsRes = await fetch('/api/targets');
-                const targets = await targetsRes.json() || [];
+                // Public dashboards don't need target name lookup - we won't show target names
                 window.targetsMap = {};
-                for (const t of targets) {
-                    window.targetsMap[t.ID] = t.Name;
-                }
 
                 await loadDashboard();
             }
 
             async function loadDashboard() {
-                const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
+                const res = await fetch(`/public/${publicSlug}/graphs`);
                 const graphs = await res.json() || [];
 
                 const container = document.getElementById('graphs-container');
@@ -197,7 +194,7 @@
 
                 const allData = [];
                 for (const targetId of targetIds) {
-                    const url = `/api/results/${targetId}?start=${range.start.toISOString()}&end=${range.end.toISOString()}`;
+                    const url = `/public/${publicSlug}/results/${targetId}?start=${range.start.toISOString()}&end=${range.end.toISOString()}`;
                     const res = await fetch(url);
                     const data = await res.json();
                     if (data) {
@@ -231,7 +228,7 @@
             }
 
             async function updateAllGraphs() {
-                const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
+                const res = await fetch(`/public/${publicSlug}/graphs`);
                 const graphs = await res.json() || [];
                 for (const graph of graphs) {
                     loadGraphChart(graph);

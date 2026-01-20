@@ -15,7 +15,10 @@ import (
 )
 
 func setupTestServer(t *testing.T) (*Server, *db.DB) {
-	database, err := db.New(":memory:")
+	// Use shared cache to allow multiple connections to the same in-memory DB
+	// This is required because nested queries (like in GetDashboardGraphs)
+	// will trigger new connections from the pool.
+	database, err := db.New("file::memory:?cache=shared")
 	if err != nil {
 		t.Fatalf("Failed to create db: %v", err)
 	}
@@ -317,6 +320,187 @@ func TestHandleDashboard(t *testing.T) {
 	if !contains(rr.Body.String(), "Dashboard") {
 		t.Errorf("Expected 'Dashboard' in response body, got:\n%s", rr.Body.String())
 	}
+}
+
+func TestPublicDashboard(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+
+	// Create a target
+	target := &db.Target{
+		Name:              "Test Target",
+		Address:           "example.com",
+		ProbeType:         "http",
+		RetentionPolicies: `[{"window": 0, "retention": 604800}, {"window": 60, "retention": 15768000}]`,
+	}
+	targetId, err := database.AddTarget(target)
+	if err != nil {
+		t.Fatalf("Failed to add target: %v", err)
+	}
+
+	// Create another target (not in dashboard)
+	otherTarget := &db.Target{
+		Name:              "Other Target",
+		Address:           "other.com",
+		ProbeType:         "http",
+		RetentionPolicies: `[{"window": 60, "retention": 604800}]`,
+	}
+	otherTargetId, err := database.AddTarget(otherTarget)
+	if err != nil {
+		t.Fatalf("Failed to add other target: %v", err)
+	}
+
+	// Create a dashboard
+	dash := &db.Dashboard{
+		Name:     "Test Dashboard",
+		IsPublic: true,
+	}
+	dashId, err := database.AddDashboard(dash)
+	if err != nil {
+		t.Fatalf("Failed to add dashboard: %v", err)
+	}
+
+	// Generate a slug for the dashboard
+	slug, err := database.RegenerateDashboardSlug(dashId)
+	if err != nil {
+		t.Fatalf("Failed to generate slug: %v", err)
+	}
+
+	// Update dashboard to be public
+	dash.ID = dashId
+	dash.IsPublic = true
+	dash.PublicSlug = slug
+	if err := database.UpdateDashboard(dash); err != nil {
+		t.Fatalf("Failed to update dashboard: %v", err)
+	}
+
+	// Add a graph to the dashboard with the first target only
+	graph := &db.DashboardGraph{
+		DashboardID: dashId,
+		Title:       "Test Graph",
+		Position:    0,
+	}
+	graphId, err := database.AddDashboardGraph(graph)
+	if err != nil {
+		t.Fatalf("Failed to add graph: %v", err)
+	}
+
+	// Set graph targets (only the first target)
+	if err := database.SetGraphTargets(graphId, []int64{targetId}); err != nil {
+		t.Fatalf("Failed to set graph targets: %v", err)
+	}
+
+	// Add some aggregated results for both targets
+	now := time.Now().UTC().Truncate(time.Second)
+	td, _ := tdigest.New(tdigest.Compression(100))
+	td.Add(100)
+	tdBytes, _ := db.SerializeTDigest(td)
+
+	r1 := &db.AggregatedResult{
+		Time:          now.Add(-30 * time.Minute),
+		TargetID:      targetId,
+		WindowSeconds: 60,
+		TDigestData:   tdBytes,
+		TimeoutCount:  0,
+	}
+	if err := database.AddAggregatedResult(r1); err != nil {
+		t.Fatalf("Failed to add result: %v", err)
+	}
+
+	r2 := &db.AggregatedResult{
+		Time:          now.Add(-30 * time.Minute),
+		TargetID:      otherTargetId,
+		WindowSeconds: 60,
+		TDigestData:   tdBytes,
+		TimeoutCount:  0,
+	}
+	if err := database.AddAggregatedResult(r2); err != nil {
+		t.Fatalf("Failed to add result: %v", err)
+	}
+
+	t.Run("Public dashboard page returns 200", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/public/"+slug, nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %v", rr.Code)
+		}
+	})
+
+	t.Run("Public dashboard page returns 404 for invalid slug", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/public/invalidslug123", nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %v", rr.Code)
+		}
+	})
+
+	t.Run("Public graphs endpoint returns graphs", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/public/"+slug+"/graphs", nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %v", rr.Code)
+		}
+
+		var graphs []db.DashboardGraph
+		if err := json.NewDecoder(rr.Body).Decode(&graphs); err != nil {
+			t.Errorf("Failed to decode response: %v", err)
+		}
+		if len(graphs) != 1 {
+			t.Errorf("Expected 1 graph, got %d", len(graphs))
+		}
+	})
+
+	t.Run("Public graphs endpoint returns 404 for invalid slug", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/public/invalidslug123/graphs", nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %v", rr.Code)
+		}
+	})
+
+	t.Run("Public results returns data for allowed target", func(t *testing.T) {
+		start := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		end := now.Format(time.RFC3339)
+		req := httptest.NewRequest("GET", "/public/"+slug+"/results/"+strconv.FormatInt(targetId, 10)+"?start="+start+"&end="+end, nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %v", rr.Code)
+		}
+	})
+
+	t.Run("Public results returns 404 for target not in dashboard", func(t *testing.T) {
+		start := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		end := now.Format(time.RFC3339)
+		req := httptest.NewRequest("GET", "/public/"+slug+"/results/"+strconv.FormatInt(otherTargetId, 10)+"?start="+start+"&end="+end, nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404 for target not in dashboard, got %v", rr.Code)
+		}
+	})
+
+	t.Run("Public results returns 404 for invalid slug", func(t *testing.T) {
+		start := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		end := now.Format(time.RFC3339)
+		req := httptest.NewRequest("GET", "/public/invalidslug123/results/"+strconv.FormatInt(targetId, 10)+"?start="+start+"&end="+end, nil)
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404 for invalid slug, got %v", rr.Code)
+		}
+	})
 }
 
 func contains(s, substr string) bool {
