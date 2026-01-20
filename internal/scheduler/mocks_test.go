@@ -284,6 +284,14 @@ func (m *MockStore) SetGraphTargets(graphID int64, targetIDs []int64) error {
 	return nil
 }
 
+func (m *MockStore) GetDashboardBySlug(slug string) (*db.Dashboard, error) {
+	return nil, nil
+}
+
+func (m *MockStore) RegenerateDashboardSlug(id int64) (string, error) {
+	return "test-slug", nil
+}
+
 // MockRunner implements probe.Runner for testing
 type MockRunner struct {
 	RunFn func(cfg probe.Config) (float64, error)

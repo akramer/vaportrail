@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -60,6 +62,8 @@ type Store interface {
 	GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error)
 	DeleteDashboardGraph(id int64) error
 	SetGraphTargets(graphID int64, targetIDs []int64) error
+	GetDashboardBySlug(slug string) (*Dashboard, error)
+	RegenerateDashboardSlug(id int64) (string, error)
 }
 
 type TDigestStat struct {
@@ -154,8 +158,10 @@ type AggregatedResult struct {
 }
 
 type Dashboard struct {
-	ID   int64
-	Name string
+	ID         int64
+	Name       string
+	IsPublic   bool
+	PublicSlug string
 }
 
 type DashboardGraph struct {
@@ -573,7 +579,8 @@ func (d *DB) GetRawStats() (*RawStats, error) {
 // Dashboard methods
 
 func (d *DB) AddDashboard(dash *Dashboard) (int64, error) {
-	res, err := d.Exec(`INSERT INTO dashboards (name) VALUES (?)`, dash.Name)
+	res, err := d.Exec(`INSERT INTO dashboards (name, is_public, public_slug) VALUES (?, ?, ?)`,
+		dash.Name, dash.IsPublic, sql.NullString{String: dash.PublicSlug, Valid: dash.PublicSlug != ""})
 	if err != nil {
 		return 0, err
 	}
@@ -581,12 +588,13 @@ func (d *DB) AddDashboard(dash *Dashboard) (int64, error) {
 }
 
 func (d *DB) UpdateDashboard(dash *Dashboard) error {
-	_, err := d.Exec(`UPDATE dashboards SET name=? WHERE id=?`, dash.Name, dash.ID)
+	_, err := d.Exec(`UPDATE dashboards SET name=?, is_public=?, public_slug=? WHERE id=?`,
+		dash.Name, dash.IsPublic, sql.NullString{String: dash.PublicSlug, Valid: dash.PublicSlug != ""}, dash.ID)
 	return err
 }
 
 func (d *DB) GetDashboards() ([]Dashboard, error) {
-	rows, err := d.Query(`SELECT id, name FROM dashboards ORDER BY name`)
+	rows, err := d.Query(`SELECT id, name, COALESCE(is_public, 0), COALESCE(public_slug, '') FROM dashboards ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +603,7 @@ func (d *DB) GetDashboards() ([]Dashboard, error) {
 	var dashboards []Dashboard
 	for rows.Next() {
 		var dash Dashboard
-		if err := rows.Scan(&dash.ID, &dash.Name); err != nil {
+		if err := rows.Scan(&dash.ID, &dash.Name, &dash.IsPublic, &dash.PublicSlug); err != nil {
 			return nil, err
 		}
 		dashboards = append(dashboards, dash)
@@ -605,7 +613,8 @@ func (d *DB) GetDashboards() ([]Dashboard, error) {
 
 func (d *DB) GetDashboard(id int64) (*Dashboard, error) {
 	var dash Dashboard
-	err := d.QueryRow(`SELECT id, name FROM dashboards WHERE id = ?`, id).Scan(&dash.ID, &dash.Name)
+	err := d.QueryRow(`SELECT id, name, COALESCE(is_public, 0), COALESCE(public_slug, '') FROM dashboards WHERE id = ?`, id).Scan(
+		&dash.ID, &dash.Name, &dash.IsPublic, &dash.PublicSlug)
 	if err != nil {
 		return nil, err
 	}
@@ -701,4 +710,44 @@ func (d *DB) SetGraphTargets(graphID int64, targetIDs []int64) error {
 	}
 
 	return tx.Commit()
+}
+
+// generateSlug creates a random URL-safe slug of the specified length
+func generateSlug(length int) (string, error) {
+	// Generate random bytes (we need more bytes because base64 encoding expands)
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	// Use URL-safe base64 encoding and trim to desired length
+	slug := base64.URLEncoding.EncodeToString(bytes)
+	// Remove padding and limit to length
+	slug = slug[:length]
+	return slug, nil
+}
+
+func (d *DB) GetDashboardBySlug(slug string) (*Dashboard, error) {
+	if slug == "" {
+		return nil, sql.ErrNoRows
+	}
+	var dash Dashboard
+	err := d.QueryRow(`SELECT id, name, COALESCE(is_public, 0), COALESCE(public_slug, '') 
+		FROM dashboards WHERE public_slug = ? AND is_public = 1`, slug).Scan(
+		&dash.ID, &dash.Name, &dash.IsPublic, &dash.PublicSlug)
+	if err != nil {
+		return nil, err
+	}
+	return &dash, nil
+}
+
+func (d *DB) RegenerateDashboardSlug(id int64) (string, error) {
+	slug, err := generateSlug(16)
+	if err != nil {
+		return "", err
+	}
+	_, err = d.Exec(`UPDATE dashboards SET public_slug = ? WHERE id = ?`, slug, id)
+	if err != nil {
+		return "", err
+	}
+	return slug, nil
 }

@@ -37,6 +37,12 @@
     </span>
 </div>
 
+<div id="public-link-banner"
+    style="display:none; margin-bottom: 15px; padding: 10px 15px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px;">
+    <span>📢 This dashboard is public: </span>
+    <a id="public-link" href="" target="_blank" style="font-weight: bold;"></a>
+</div>
+
 <div id="graphs-container"></div>
 
 <style>
@@ -209,6 +215,18 @@
         document.getElementById('time-controls').style.display = 'block';
         document.getElementById('edit-btn').style.display = 'inline-block';
         document.getElementById('delete-btn').style.display = 'inline-block';
+
+        // Check if dashboard is public and show link
+        const dashboard = dashboards.find(d => d.ID === dashboardId);
+        const publicBanner = document.getElementById('public-link-banner');
+        if (dashboard && dashboard.IsPublic && dashboard.PublicSlug) {
+            const publicUrl = window.location.origin + '/public/' + dashboard.PublicSlug;
+            document.getElementById('public-link').href = publicUrl;
+            document.getElementById('public-link').textContent = publicUrl;
+            publicBanner.style.display = 'block';
+        } else {
+            publicBanner.style.display = 'none';
+        }
 
         // Update URL
         history.pushState(null, '', '/dashboards/view?id=' + dashboardId);

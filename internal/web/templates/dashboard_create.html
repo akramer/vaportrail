@@ -2,22 +2,38 @@
 
 <h1 id="page-title">Create Dashboard</h1>
 
-<div class="dashboard-form">
-    <div class="form-group">
-        <label for="dashboard-name">Dashboard Name:</label>
-        <input type="text" id="dashboard-name" placeholder="My Dashboard" required>
-    </div>
+<div class="form-group">
+    <label for="dashboard-name">Dashboard Name:</label>
+    <input type="text" id="dashboard-name" placeholder="My Dashboard" required>
+</div>
 
-    <div class="graphs-section">
-        <h2>Graphs</h2>
-        <div id="graphs-container"></div>
-        <button type="button" onclick="addGraph()">+ Add Graph</button>
+<div class="form-group public-section">
+    <label>
+        <input type="checkbox" id="is-public" onchange="togglePublicSection()">
+        Make Dashboard Public
+    </label>
+    <div id="public-url-section" style="display: none; margin-top: 10px;">
+        <div class="public-url-container">
+            <label>Public URL:</label>
+            <div class="url-input-group">
+                <input type="text" id="public-url" readonly>
+                <button type="button" onclick="copyPublicUrl()" class="btn-copy">Copy</button>
+                <button type="button" onclick="regenerateSlug()" class="btn-regenerate">Regenerate</button>
+            </div>
+        </div>
     </div>
+</div>
 
-    <div class="form-actions" style="margin-top: 20px;">
-        <button onclick="saveDashboard()" class="btn-primary">Save Dashboard</button>
-        <button onclick="window.location.href='/dashboards/view'" class="btn-secondary">Cancel</button>
-    </div>
+<div class="graphs-section">
+    <h2>Graphs</h2>
+    <div id="graphs-container"></div>
+    <button type="button" onclick="addGraph()">+ Add Graph</button>
+</div>
+
+<div class="form-actions" style="margin-top: 20px;">
+    <button onclick="saveDashboard()" class="btn-primary">Save Dashboard</button>
+    <button onclick="window.location.href='/dashboards/view'" class="btn-secondary">Cancel</button>
+</div>
 </div>
 
 <style>
@@ -102,12 +118,61 @@
         border-radius: 4px;
         margin-left: 10px;
     }
+
+    .public-section {
+        padding: 15px;
+        background: #f0f8ff;
+        border: 1px solid #cce5ff;
+        border-radius: 4px;
+    }
+
+    .public-section label {
+        font-weight: normal;
+    }
+
+    .public-url-container {
+        margin-top: 10px;
+    }
+
+    .url-input-group {
+        display: flex;
+        gap: 5px;
+        margin-top: 5px;
+    }
+
+    .url-input-group input {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+    }
+
+    .btn-copy,
+    .btn-regenerate {
+        padding: 8px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .btn-copy {
+        background: #17a2b8;
+        color: white;
+    }
+
+    .btn-regenerate {
+        background: #ffc107;
+        color: black;
+    }
 </style>
 
 <script>
     let allTargets = [];
     let graphCount = 0;
     let editingDashboardId = null;
+    let currentPublicSlug = '';
+    let currentIsPublic = false;
 
     async function init() {
         // Load all targets
@@ -135,6 +200,12 @@
         const dashboard = dashboards.find(d => d.ID === id);
         if (dashboard) {
             document.getElementById('dashboard-name').value = dashboard.Name;
+
+            // Set public settings
+            currentIsPublic = dashboard.IsPublic || false;
+            currentPublicSlug = dashboard.PublicSlug || '';
+            document.getElementById('is-public').checked = currentIsPublic;
+            togglePublicSection();
         }
 
         // Load graphs
@@ -238,11 +309,15 @@
 
             if (editingDashboardId) {
                 // Update existing dashboard
-                await fetch(`/api/dashboards/${editingDashboardId}`, {
+                const isPublic = document.getElementById('is-public').checked;
+                const res = await fetch(`/api/dashboards/${editingDashboardId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ Name: name })
+                    body: JSON.stringify({ Name: name, IsPublic: isPublic, PublicSlug: currentPublicSlug })
                 });
+                const updated = await res.json();
+                currentPublicSlug = updated.PublicSlug || '';
+                updatePublicUrlDisplay();
             } else {
                 // Create new dashboard
                 const res = await fetch('/api/dashboards', {
@@ -275,6 +350,58 @@
             window.location.href = '/dashboards/view?id=' + dashboardId;
         } catch (err) {
             alert('Error saving dashboard: ' + err.message);
+        }
+    }
+
+    function togglePublicSection() {
+        const isPublic = document.getElementById('is-public').checked;
+        const section = document.getElementById('public-url-section');
+        section.style.display = isPublic ? 'block' : 'none';
+
+        if (isPublic) {
+            updatePublicUrlDisplay();
+        }
+    }
+
+    function updatePublicUrlDisplay() {
+        const urlInput = document.getElementById('public-url');
+        if (currentPublicSlug) {
+            urlInput.value = window.location.origin + '/public/' + currentPublicSlug;
+        } else {
+            urlInput.value = '(URL will be generated when saved)';
+        }
+    }
+
+    function copyPublicUrl() {
+        const urlInput = document.getElementById('public-url');
+        urlInput.select();
+        document.execCommand('copy');
+        alert('URL copied to clipboard!');
+    }
+
+    async function regenerateSlug() {
+        if (!editingDashboardId) {
+            alert('Please save the dashboard first to generate a public URL.');
+            return;
+        }
+
+        // Only show warning if there's an existing slug that will be invalidated
+        if (currentPublicSlug && !confirm('Are you sure? The old URL will stop working immediately.')) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/dashboards/${editingDashboardId}/regenerate-slug`, {
+                method: 'POST'
+            });
+            const data = await res.json();
+            currentPublicSlug = data.slug;
+            updatePublicUrlDisplay();
+            if (!currentPublicSlug) {
+                alert('New URL generated!');
+            }
+        } catch (err) {
+            alert('Error regenerating URL: ' + err.message);
         }
     }
 

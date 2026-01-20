@@ -141,6 +141,10 @@ func (s *Server) routes() {
 	// Dashboard pages
 	s.router.Get("/dashboards/create", s.handleDashboardCreatePage)
 	s.router.Get("/dashboards/view", s.handleDashboardViewPage)
+
+	// Public dashboard routes
+	s.router.Get("/public/{slug}", s.handlePublicDashboard)
+	s.router.Post("/api/dashboards/{id}/regenerate-slug", s.handleRegenerateDashboardSlug)
 }
 
 func (s *Server) Start() error {
@@ -753,6 +757,16 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If enabling public access and no slug exists, generate one
+	if dash.IsPublic && dash.PublicSlug == "" {
+		slug, err := s.db.RegenerateDashboardSlug(id)
+		if err != nil {
+			http.Error(w, "Failed to generate public URL: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		dash.PublicSlug = slug
+	}
+
 	if err := s.db.UpdateDashboard(&dash); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -916,4 +930,42 @@ func (s *Server) handleDashboardViewPage(w http.ResponseWriter, r *http.Request)
 	if err := s.templates.ExecuteTemplate(w, "dashboard_view.html", nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// Public dashboard handlers
+
+func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	dash, err := s.db.GetDashboardBySlug(slug)
+	if err != nil {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "dashboard_public.html", dash); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleRegenerateDashboardSlug(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	slug, err := s.db.RegenerateDashboardSlug(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"slug": slug})
 }

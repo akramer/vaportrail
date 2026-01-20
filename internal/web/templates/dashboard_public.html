@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>{{.Name}} - VaporTrail</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+    <script src="/static/vaportrail-charts.js"></script>
+    <style>
+        body {
+            padding: 20px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+
+        <div class="dashboard-header">
+            <h1>{{.Name}}</h1>
+        </div>
+
+        <div class="time-controls" id="time-controls">
+            <span>Presets:</span>
+            <button onclick="setRange('1h')">Last 1h</button>
+            <button onclick="setRange('24h')">Last 24h</button>
+            <button onclick="setRange('7d')">Last 7d</button>
+            <button onclick="setRange('30d')">Last 30d</button>
+
+            <span style="margin-left: 20px;">Range:</span>
+            <input type="datetime-local" id="start-time">
+            <span>to</span>
+            <input type="datetime-local" id="end-time">
+            <button onclick="updateAllGraphs()">Go</button>
+
+            <span style="margin-left: 20px;">Graph Mode:</span>
+            <select id="graph-mode" onchange="changeGraphMode(this.value)">
+                <option value="heatmap">Heatmap</option>
+                <option value="line">Line Chart</option>
+            </select>
+            <span style="margin-left: 20px;">
+                <input type="checkbox" id="log-scale" onchange="updateAllGraphs()">
+                <label for="log-scale">Log Scale</label>
+            </span>
+        </div>
+
+        <div id="graphs-container"></div>
+
+        <style>
+            .dashboard-header {
+                margin-bottom: 20px;
+            }
+
+            .dashboard-header h1 {
+                margin: 0;
+            }
+
+            .time-controls {
+                margin-bottom: 20px;
+                padding: 10px;
+                background: #f5f5f5;
+                border-radius: 4px;
+            }
+
+            .time-controls button {
+                margin-right: 5px;
+            }
+
+            .graph-card {
+                border: 1px solid #ddd;
+                margin-bottom: 20px;
+                border-radius: 4px;
+                background: white;
+            }
+
+            .graph-card h3 {
+                margin: 0;
+                padding: 10px 15px;
+                background: #f8f9fa;
+                border-bottom: 1px solid #ddd;
+            }
+
+            .graph-chart-container {
+                position: relative;
+                height: 300px;
+                padding: 10px;
+            }
+        </style>
+
+        <script>
+            const dashboardId = {{.ID }};
+            let currentGraphMode = 'heatmap';
+            let chartInstances = {};
+
+            function toLocalISO(d) {
+                const offset = d.getTimezoneOffset() * 60000;
+                return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+            }
+
+            function setInputs(start, end) {
+                document.getElementById('start-time').value = toLocalISO(start);
+                document.getElementById('end-time').value = toLocalISO(end);
+            }
+
+            function getInputs() {
+                const s = document.getElementById('start-time').value;
+                const e = document.getElementById('end-time').value;
+                if (s && e) {
+                    return { start: new Date(s), end: new Date(e) };
+                }
+                return null;
+            }
+
+            function setRange(range) {
+                const end = new Date();
+                let start = new Date();
+                switch (range) {
+                    case '1h': start.setTime(end.getTime() - 1 * 60 * 60 * 1000); break;
+                    case '24h': start.setTime(end.getTime() - 24 * 60 * 60 * 1000); break;
+                    case '7d': start.setTime(end.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+                    case '30d': start.setTime(end.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+                }
+                setInputs(start, end);
+                updateAllGraphs();
+            }
+
+            function changeGraphMode(mode) {
+                currentGraphMode = mode;
+                updateAllGraphs();
+            }
+
+            async function init() {
+                const end = new Date();
+                const start = new Date(end.getTime() - 60 * 60 * 1000);
+                setInputs(start, end);
+
+                const targetsRes = await fetch('/api/targets');
+                const targets = await targetsRes.json() || [];
+                window.targetsMap = {};
+                for (const t of targets) {
+                    window.targetsMap[t.ID] = t.Name;
+                }
+
+                await loadDashboard();
+            }
+
+            async function loadDashboard() {
+                const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
+                const graphs = await res.json() || [];
+
+                const container = document.getElementById('graphs-container');
+                container.innerHTML = '';
+
+                for (const key in chartInstances) {
+                    if (chartInstances[key]) {
+                        chartInstances[key].destroy();
+                    }
+                }
+                chartInstances = {};
+
+                for (const graph of graphs) {
+                    const div = document.createElement('div');
+                    div.className = 'graph-card';
+                    div.innerHTML = `
+                <h3>${graph.Title}</h3>
+                <div class="graph-chart-container" style="position: relative;">
+                    <div id="tooltip-${graph.ID}" style="position: absolute; top: 10px; right: 10px; background: rgba(0, 0, 0, 0.8); color: #fff; padding: 10px; border-radius: 5px; pointer-events: none; font-family: monospace; font-size: 12px; z-index: 100; display: none; min-width: 150px;"></div>
+                    <canvas id="chart-${graph.ID}"></canvas>
+                </div>
+            `;
+                    container.appendChild(div);
+                    loadGraphChart(graph);
+                }
+
+                if (graphs.length === 0) {
+                    container.innerHTML = '<p>No graphs in this dashboard.</p>';
+                }
+            }
+
+            async function loadGraphChart(graph) {
+                const range = getInputs();
+                if (!range) return;
+
+                const targetIds = graph.TargetIDs || [];
+                if (targetIds.length === 0) return;
+
+                const allData = [];
+                for (const targetId of targetIds) {
+                    const url = `/api/results/${targetId}?start=${range.start.toISOString()}&end=${range.end.toISOString()}`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    if (data) {
+                        allData.push({ targetId, data });
+                    }
+                }
+
+                const canvasId = `chart-${graph.ID}`;
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) return;
+
+                if (chartInstances[graph.ID]) {
+                    chartInstances[graph.ID].destroy();
+                }
+
+                const useLogScale = document.getElementById('log-scale').checked;
+
+                chartInstances[graph.ID] = VaporTrail.renderLatencyChart({
+                    canvas: canvas,
+                    data: allData,
+                    range: range,
+                    mode: currentGraphMode,
+                    useLogScale: useLogScale,
+                    multiTarget: true,
+                    targetsMap: window.targetsMap,
+                    onZoomComplete: function (start, end) {
+                        setInputs(start, end);
+                        updateAllGraphs();
+                    }
+                });
+            }
+
+            async function updateAllGraphs() {
+                const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
+                const graphs = await res.json() || [];
+                for (const graph of graphs) {
+                    loadGraphChart(graph);
+                }
+            }
+
+            init();
+        </script>
+
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>
