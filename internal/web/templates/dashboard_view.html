@@ -170,13 +170,8 @@
         const start = new Date(end.getTime() - 60 * 60 * 1000);
         setInputs(start, end);
 
-        // Load targets (for name lookup)
-        const targetsRes = await fetch('/api/targets');
-        const targets = await targetsRes.json() || [];
+        // Initialize targets map (populated from graph data)
         window.targetsMap = {};
-        for (const t of targets) {
-            window.targetsMap[t.ID] = t.Name;
-        }
 
         // Load dashboards
         const res = await fetch('/api/dashboards');
@@ -234,6 +229,15 @@
         // Load graphs
         const res = await fetch(`/api/dashboards/${dashboardId}/graphs`);
         const graphs = await res.json() || [];
+
+        // Populate targetsMap from graph data
+        for (const graph of graphs) {
+            if (graph.TargetNames) {
+                for (const [id, name] of Object.entries(graph.TargetNames)) {
+                    window.targetsMap[id] = name;
+                }
+            }
+        }
 
         const container = document.getElementById('graphs-container');
         container.innerHTML = '';

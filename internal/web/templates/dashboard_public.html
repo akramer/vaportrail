@@ -156,6 +156,15 @@
                 const res = await fetch(`/public/${publicSlug}/graphs`);
                 const graphs = await res.json() || [];
 
+                // Populate targetsMap from graph data so we can display names
+                for (const graph of graphs) {
+                    if (graph.TargetNames) {
+                        for (const [id, name] of Object.entries(graph.TargetNames)) {
+                            window.targetsMap[id] = name;
+                        }
+                    }
+                }
+
                 const container = document.getElementById('graphs-container');
                 container.innerHTML = '';
 

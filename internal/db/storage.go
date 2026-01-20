@@ -169,7 +169,8 @@ type DashboardGraph struct {
 	DashboardID int64
 	Title       string
 	Position    int
-	TargetIDs   []int64 // Populated on read
+	TargetIDs   []int64          // Populated on read
+	TargetNames map[int64]string // Populated on read, implementation detail for API
 }
 
 func (d *DB) AddTarget(t *Target) (int64, error) {
@@ -655,18 +656,25 @@ func (d *DB) GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error) {
 		if err := rows.Scan(&g.ID, &g.DashboardID, &g.Title, &g.Position); err != nil {
 			return nil, err
 		}
-		// Fetch target IDs for this graph
-		targetRows, err := d.Query(`SELECT target_id FROM dashboard_graph_targets WHERE graph_id = ?`, g.ID)
+		// Fetch target IDs and names for this graph
+		targetRows, err := d.Query(`
+			SELECT dgt.target_id, t.name 
+			FROM dashboard_graph_targets dgt
+			JOIN targets t ON dgt.target_id = t.id 
+			WHERE dgt.graph_id = ?`, g.ID)
 		if err != nil {
 			return nil, err
 		}
+		g.TargetNames = make(map[int64]string)
 		for targetRows.Next() {
 			var tid int64
-			if err := targetRows.Scan(&tid); err != nil {
+			var tName string
+			if err := targetRows.Scan(&tid, &tName); err != nil {
 				targetRows.Close()
 				return nil, err
 			}
 			g.TargetIDs = append(g.TargetIDs, tid)
+			g.TargetNames[tid] = tName
 		}
 		targetRows.Close()
 		graphs = append(graphs, g)
