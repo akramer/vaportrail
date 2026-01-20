@@ -639,6 +639,13 @@ const VaporTrail = (function () {
         } else if (multiTarget) {
             chartOptions.plugins.tooltip = {
                 callbacks: {
+                    title: function (context) {
+                        // Use originalTime (window start) instead of centered x value
+                        if (context.length > 0 && context[0].raw.originalTime) {
+                            return new Date(context[0].raw.originalTime).toLocaleString();
+                        }
+                        return '';
+                    },
                     label: function (context) {
                         const d = context.raw.originalData;
                         const tid = context.raw.targetId;
@@ -652,6 +659,19 @@ const VaporTrail = (function () {
                             `  Success: ${d.ProbeCount}`,
                             `  Timeout: ${d.TimeoutCount}`
                         ];
+                    }
+                }
+            };
+        } else {
+            // Single target without external tooltip (dashboard.html)
+            // Add title callback to show correct time
+            chartOptions.plugins.tooltip = {
+                callbacks: {
+                    title: function (context) {
+                        if (context.length > 0 && context[0].raw && context[0].raw.originalTime) {
+                            return new Date(context[0].raw.originalTime).toLocaleString();
+                        }
+                        return '';
                     }
                 }
             };
