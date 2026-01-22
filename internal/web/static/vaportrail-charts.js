@@ -426,7 +426,8 @@ const VaporTrail = (function () {
             tooltipEl = null,
             targetsMap = {},
             onZoomComplete = null,
-            multiTarget = false
+            multiTarget = false,
+            animate = true
         } = options;
 
         const ctx = canvas.getContext('2d');
@@ -440,7 +441,8 @@ const VaporTrail = (function () {
                 tooltipEl,
                 targetsMap,
                 onZoomComplete,
-                multiTarget
+                multiTarget,
+                animate
             });
         } else {
             return renderLineChart(ctx, {
@@ -449,7 +451,8 @@ const VaporTrail = (function () {
                 rawData,
                 targetsMap,
                 onZoomComplete,
-                multiTarget
+                multiTarget,
+                animate
             });
         }
     }
@@ -463,7 +466,8 @@ const VaporTrail = (function () {
             tooltipEl,
             targetsMap,
             onZoomComplete,
-            multiTarget
+            multiTarget,
+            animate = true
         } = options;
 
         const datasets = [];
@@ -571,6 +575,7 @@ const VaporTrail = (function () {
 
         // Build chart options
         const chartOptions = {
+            animation: animate ? {} : false,
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
@@ -721,7 +726,8 @@ const VaporTrail = (function () {
             rawData,
             targetsMap,
             onZoomComplete,
-            multiTarget
+            multiTarget,
+            animate = true
         } = options;
 
         const datasets = [];
@@ -786,6 +792,7 @@ const VaporTrail = (function () {
         }
 
         const chartOptions = {
+            animation: animate ? {} : false,
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },

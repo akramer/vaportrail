@@ -285,7 +285,7 @@
         }
     }
 
-    async function loadGraphChart(graph) {
+    async function loadGraphChart(graph, enableAnimation = true) {
         const range = getInputs();
         if (!range) return;
 
@@ -321,16 +321,17 @@
             useLogScale: useLogScale,
             multiTarget: true,
             targetsMap: window.targetsMap,
+            animate: enableAnimation,
             onZoomComplete: function (start, end) {
                 setInputs(start, end);
                 VaporTrail.updateURLTimeParams(start, end); // NOTE: updateAllGraphs handles full state push, but this helper is convenient if we just wanted time.
                 // However, updateAllGraphs handles ID preservation too.
-                updateAllGraphs();
+                updateAllGraphs(false);
             }
         });
     }
 
-    async function updateAllGraphs() {
+    async function updateAllGraphs(enableAnimation = true) {
         if (!currentDashboardId) return;
 
         // Sync to URL
@@ -347,7 +348,7 @@
         const res = await fetch(`/api/dashboards/${currentDashboardId}/graphs`);
         const graphs = await res.json() || [];
         for (const graph of graphs) {
-            loadGraphChart(graph);
+            loadGraphChart(graph, enableAnimation);
         }
     }
 
