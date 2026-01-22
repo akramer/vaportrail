@@ -127,7 +127,7 @@
         }
     });
 
-    async function loadChart() {
+    async function loadChart(enableAnimation = true) {
         const range = getInputs();
         if (!range) return;
 
@@ -175,9 +175,10 @@
             useLogScale: useLogScale,
             rawData: rawData,
             tooltipEl: tooltipEl,
+            animate: enableAnimation,
             onZoomComplete: function (start, end) {
                 setInputs(start, end);
-                loadChart();
+                loadChart(false);
             }
         });
     }

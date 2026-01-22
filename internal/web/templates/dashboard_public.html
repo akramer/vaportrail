@@ -199,7 +199,7 @@
                 }
             }
 
-            async function loadGraphChart(graph) {
+            async function loadGraphChart(graph, enableAnimation = true) {
                 const range = getInputs();
                 if (!range) return;
 
@@ -234,14 +234,15 @@
                     useLogScale: useLogScale,
                     multiTarget: true,
                     targetsMap: window.targetsMap,
+                    animate: enableAnimation,
                     onZoomComplete: function (start, end) {
                         setInputs(start, end);
-                        updateAllGraphs();
+                        updateAllGraphs(false);
                     }
                 });
             }
 
-            async function updateAllGraphs() {
+            async function updateAllGraphs(enableAnimation = true) {
                 const range = getInputs();
                 if (range) {
                     VaporTrail.updateURLTimeParams(range.start, range.end);
@@ -250,7 +251,7 @@
                 const res = await fetch(`/public/${publicSlug}/graphs`);
                 const graphs = await res.json() || [];
                 for (const graph of graphs) {
-                    loadGraphChart(graph);
+                    loadGraphChart(graph, enableAnimation);
                 }
             }
 
