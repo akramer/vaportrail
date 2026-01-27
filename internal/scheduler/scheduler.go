@@ -69,8 +69,7 @@ func (s *Scheduler) runBatchWriter() {
 		} else {
 			// log.Printf("Flushed %d raw results", len(buffer))
 		}
-		buffer = nil // Reset buffer (allocating new slice is safer/easier than zeroing)
-		buffer = make([]db.RawResult, 0, 100)
+		buffer = buffer[:0] // Reset buffer (reuse existing slice)
 	}
 
 	for {
