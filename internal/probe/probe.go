@@ -34,10 +34,11 @@ type Config struct {
 
 	// Deprecated fields, kept for "ping" command execution
 	Command    string        `json:"command"`
-	Args       []string      `json:"args"`
-	Pattern    string        `json:"pattern"`
-	Multiplier float64       `json:"multiplier"`
-	Timeout    time.Duration `json:"-"`
+	Args       []string       `json:"args"`
+	Pattern    string         `json:"pattern"`
+	Multiplier float64        `json:"multiplier"`
+	Timeout    time.Duration  `json:"-"`
+	CompiledPattern *regexp.Regexp `json:"-"`
 }
 
 // GetConfig returns the probe configuration for a given type and target address.
@@ -52,6 +53,11 @@ func GetConfig(probeType, address string) (Config, error) {
 		cfg.Command = "ping"
 		cfg.Args = []string{"-c", "1", address}
 		cfg.Pattern = "time=(?P<val>[0-9.]+) ms"
+		var err error
+		cfg.CompiledPattern, err = regexp.Compile(cfg.Pattern)
+		if err != nil {
+			return Config{}, fmt.Errorf("failed to compile ping pattern: %w", err)
+		}
 		cfg.Multiplier = 1000000
 
 	case "http", "dns":
@@ -261,9 +267,15 @@ func runCommand(ctx context.Context, cfg Config) (float64, error) {
 		return 0, fmt.Errorf("command failed: %v, output: %s", err, string(output))
 	}
 
-	re, err := regexp.Compile(cfg.Pattern)
-	if err != nil {
-		return 0, fmt.Errorf("invalid regex pattern: %w", err)
+	var re *regexp.Regexp
+	if cfg.CompiledPattern != nil {
+		re = cfg.CompiledPattern
+	} else {
+		var err error
+		re, err = regexp.Compile(cfg.Pattern)
+		if err != nil {
+			return 0, fmt.Errorf("invalid regex pattern: %w", err)
+		}
 	}
 
 	matches := re.FindStringSubmatch(string(output))
