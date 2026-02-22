@@ -127,14 +127,9 @@
     let currentGraphMode = 'heatmap';
     let chartInstances = {};
 
-    function toLocalISO(d) {
-        const offset = d.getTimezoneOffset() * 60000;
-        return new Date(d.getTime() - offset).toISOString().slice(0, 16);
-    }
-
     function setInputs(start, end) {
-        document.getElementById('start-time').value = toLocalISO(start);
-        document.getElementById('end-time').value = toLocalISO(end);
+        document.getElementById('start-time').value = VaporTrail.toLocalISO(start);
+        document.getElementById('end-time').value = VaporTrail.toLocalISO(end);
     }
 
     function getInputs() {
@@ -313,6 +308,8 @@
 
         const useLogScale = document.getElementById('log-scale').checked;
 
+        const tooltipEl = document.getElementById(`tooltip-${graph.ID}`);
+
         chartInstances[graph.ID] = VaporTrail.renderLatencyChart({
             canvas: canvas,
             data: allData,
@@ -321,6 +318,7 @@
             useLogScale: useLogScale,
             multiTarget: true,
             targetsMap: window.targetsMap,
+            tooltipEl: tooltipEl,
             animate: enableAnimation,
             onZoomComplete: function (start, end) {
                 setInputs(start, end);

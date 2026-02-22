@@ -396,6 +396,64 @@ const VaporTrail = (function () {
         };
     }
 
+    /**
+     * Create external tooltip handler for multi-target charts
+     */
+    function createMultiTargetExternalTooltipHandler(tooltipEl, multiData, targetsMap) {
+        return function (context) {
+            const tooltipModel = context.tooltip;
+            if (tooltipModel.opacity === 0) {
+                tooltipEl.style.display = 'none';
+                return;
+            }
+
+            // Smart relative positioning (5% offset, prefer left)
+            const offset = context.chart.width * 0.05;
+            const tooltipWidth = tooltipEl.offsetWidth;
+            const chartLeft = context.chart.chartArea.left;
+            const caretX = tooltipModel.caretX;
+
+            let targetLeft = caretX - offset - tooltipWidth;
+
+            if (targetLeft < chartLeft) {
+                tooltipEl.style.left = (caretX + offset) + 'px';
+                tooltipEl.style.right = 'auto';
+            } else {
+                tooltipEl.style.left = targetLeft + 'px';
+                tooltipEl.style.right = 'auto';
+            }
+
+            // Build tooltip content from all data points at this index
+            if (tooltipModel.body && tooltipModel.dataPoints && tooltipModel.dataPoints.length > 0) {
+                const firstPoint = tooltipModel.dataPoints[0];
+                const barData = context.chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.dataIndex];
+
+                let content = '';
+                if (barData && barData.originalTime) {
+                    content += `<div style="font-weight:bold; margin-bottom:5px;">${new Date(barData.originalTime).toLocaleString()}</div>`;
+                }
+
+                for (const dp of tooltipModel.dataPoints) {
+                    const dsData = context.chart.data.datasets[dp.datasetIndex].data[dp.dataIndex];
+                    if (!dsData || !dsData.originalData) continue;
+                    const d = dsData.originalData;
+                    const tid = dsData.targetId;
+                    const tname = targetsMap[tid] || `Target ${tid}`;
+
+                    content += `<div style="font-weight:bold; margin-top:5px;">${tname}</div>`;
+                    content += `<div>  Max: ${(d.P100 / 1e6).toFixed(2)} ms</div>`;
+                    content += `<div>  Median: ${(d.P50 / 1e6).toFixed(2)} ms</div>`;
+                    content += `<div>  Min: ${(d.P0 / 1e6).toFixed(2)} ms</div>`;
+                    content += `<div>  Success: ${d.ProbeCount} | Timeout: ${d.TimeoutCount}</div>`;
+                }
+
+                tooltipEl.innerHTML = content;
+            }
+
+            tooltipEl.style.display = 'block';
+        };
+    }
+
     // ============================================
     // MAIN CHART RENDERING
     // ============================================
@@ -669,6 +727,11 @@ const VaporTrail = (function () {
             chartOptions.plugins.tooltip = {
                 enabled: false,
                 external: createExternalTooltipHandler(tooltipEl, data)
+            };
+        } else if (multiTarget && tooltipEl) {
+            chartOptions.plugins.tooltip = {
+                enabled: false,
+                external: createMultiTargetExternalTooltipHandler(tooltipEl, data, targetsMap)
             };
         } else if (multiTarget) {
             chartOptions.plugins.tooltip = {
