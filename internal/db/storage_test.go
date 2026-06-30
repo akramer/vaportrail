@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
@@ -404,6 +406,58 @@ func TestDeleteDashboardCascadesGraphsAndTargets(t *testing.T) {
 		if count != 0 {
 			t.Fatalf("Expected %s rows to be deleted, got %d", tc.name, count)
 		}
+	}
+}
+
+func TestDashboardGraphMutationsRequireMatchingDashboard(t *testing.T) {
+	d, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create db: %v", err)
+	}
+	defer d.Close()
+
+	dashboardAID, err := d.AddDashboard(&Dashboard{Name: "dash-a"})
+	if err != nil {
+		t.Fatalf("AddDashboard A failed: %v", err)
+	}
+	dashboardBID, err := d.AddDashboard(&Dashboard{Name: "dash-b"})
+	if err != nil {
+		t.Fatalf("AddDashboard B failed: %v", err)
+	}
+	graphID, err := d.AddDashboardGraph(&DashboardGraph{DashboardID: dashboardBID, Title: "original", Position: 1})
+	if err != nil {
+		t.Fatalf("AddDashboardGraph failed: %v", err)
+	}
+
+	err = d.UpdateDashboardGraph(&DashboardGraph{
+		ID:          graphID,
+		DashboardID: dashboardAID,
+		Title:       "wrong dashboard",
+		Position:    2,
+	})
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Expected dashboard mismatch update to return sql.ErrNoRows, got %v", err)
+	}
+
+	var title string
+	var position int
+	if err := d.QueryRow(`SELECT title, position FROM dashboard_graphs WHERE id = ? AND dashboard_id = ?`, graphID, dashboardBID).Scan(&title, &position); err != nil {
+		t.Fatalf("Failed to read graph after update: %v", err)
+	}
+	if title != "original" || position != 1 {
+		t.Fatalf("Graph changed after dashboard mismatch update: title=%q position=%d", title, position)
+	}
+
+	if err := d.DeleteDashboardGraph(graphID, dashboardAID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Expected dashboard mismatch delete to return sql.ErrNoRows, got %v", err)
+	}
+
+	var count int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM dashboard_graphs WHERE id = ? AND dashboard_id = ?`, graphID, dashboardBID).Scan(&count); err != nil {
+		t.Fatalf("Failed to count graph after delete: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected graph to remain after dashboard mismatch delete, got %d graphs", count)
 	}
 }
 

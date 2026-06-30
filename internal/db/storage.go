@@ -61,7 +61,7 @@ type Store interface {
 	AddDashboardGraph(g *DashboardGraph) (int64, error)
 	UpdateDashboardGraph(g *DashboardGraph) error
 	GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error)
-	DeleteDashboardGraph(id int64) error
+	DeleteDashboardGraph(id, dashboardID int64) error
 	SetGraphTargets(graphID int64, targetIDs []int64) error
 	GetDashboardBySlug(slug string) (*Dashboard, error)
 	RegenerateDashboardSlug(id int64) (string, error)
@@ -673,9 +673,19 @@ func (d *DB) AddDashboardGraph(g *DashboardGraph) (int64, error) {
 }
 
 func (d *DB) UpdateDashboardGraph(g *DashboardGraph) error {
-	_, err := d.Exec(`UPDATE dashboard_graphs SET title=?, position=? WHERE id=?`,
-		g.Title, g.Position, g.ID)
-	return err
+	res, err := d.Exec(`UPDATE dashboard_graphs SET title=?, position=? WHERE id=? AND dashboard_id=?`,
+		g.Title, g.Position, g.ID, g.DashboardID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (d *DB) GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error) {
@@ -717,10 +727,20 @@ func (d *DB) GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error) {
 	return graphs, nil
 }
 
-func (d *DB) DeleteDashboardGraph(id int64) error {
+func (d *DB) DeleteDashboardGraph(id, dashboardID int64) error {
 	// Graph target links will be deleted via CASCADE
-	_, err := d.Exec(`DELETE FROM dashboard_graphs WHERE id = ?`, id)
-	return err
+	res, err := d.Exec(`DELETE FROM dashboard_graphs WHERE id = ? AND dashboard_id = ?`, id, dashboardID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (d *DB) SetGraphTargets(graphID int64, targetIDs []int64) error {

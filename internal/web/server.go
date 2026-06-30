@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -865,6 +867,13 @@ func (s *Server) handleCreateDashboardGraph(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleUpdateDashboardGraph(w http.ResponseWriter, r *http.Request) {
+	dashboardIdStr := chi.URLParam(r, "dashboardId")
+	dashboardID, err := strconv.ParseInt(dashboardIdStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid dashboard ID", http.StatusBadRequest)
+		return
+	}
+
 	graphIdStr := chi.URLParam(r, "graphId")
 	graphID, err := strconv.ParseInt(graphIdStr, 10, 64)
 	if err != nil {
@@ -884,12 +893,17 @@ func (s *Server) handleUpdateDashboardGraph(w http.ResponseWriter, r *http.Reque
 	}
 
 	graph := &db.DashboardGraph{
-		ID:       graphID,
-		Title:    req.Title,
-		Position: req.Position,
+		ID:          graphID,
+		DashboardID: dashboardID,
+		Title:       req.Title,
+		Position:    req.Position,
 	}
 
 	if err := s.db.UpdateDashboardGraph(graph); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Graph not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -906,6 +920,13 @@ func (s *Server) handleUpdateDashboardGraph(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleDeleteDashboardGraph(w http.ResponseWriter, r *http.Request) {
+	dashboardIdStr := chi.URLParam(r, "dashboardId")
+	dashboardID, err := strconv.ParseInt(dashboardIdStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid dashboard ID", http.StatusBadRequest)
+		return
+	}
+
 	graphIdStr := chi.URLParam(r, "graphId")
 	graphID, err := strconv.ParseInt(graphIdStr, 10, 64)
 	if err != nil {
@@ -913,7 +934,11 @@ func (s *Server) handleDeleteDashboardGraph(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := s.db.DeleteDashboardGraph(graphID); err != nil {
+	if err := s.db.DeleteDashboardGraph(graphID, dashboardID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Graph not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

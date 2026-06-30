@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,6 +140,63 @@ func TestHandleGetResults(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400 for invalid start time, got %v", rr.Code)
+	}
+}
+
+func TestDashboardGraphRoutesRequireMatchingDashboard(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+
+	dashboardAID, err := database.AddDashboard(&db.Dashboard{Name: "dash-a"})
+	if err != nil {
+		t.Fatalf("Failed to add dashboard A: %v", err)
+	}
+	dashboardBID, err := database.AddDashboard(&db.Dashboard{Name: "dash-b"})
+	if err != nil {
+		t.Fatalf("Failed to add dashboard B: %v", err)
+	}
+	graphID, err := database.AddDashboardGraph(&db.DashboardGraph{
+		DashboardID: dashboardBID,
+		Title:       "original",
+		Position:    1,
+	})
+	if err != nil {
+		t.Fatalf("Failed to add graph: %v", err)
+	}
+
+	updateURL := "/api/dashboards/" + strconv.FormatInt(dashboardAID, 10) + "/graphs/" + strconv.FormatInt(graphID, 10)
+	updateBody := `{"title":"wrong dashboard","position":2,"targetIds":[]}`
+	req := httptest.NewRequest("PUT", updateURL, strings.NewReader(updateBody))
+	rr := httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("Expected dashboard mismatch update to return 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	graphs, err := database.GetDashboardGraphs(dashboardBID)
+	if err != nil {
+		t.Fatalf("Failed to get dashboard B graphs: %v", err)
+	}
+	if len(graphs) != 1 || graphs[0].Title != "original" || graphs[0].Position != 1 {
+		t.Fatalf("Graph changed after mismatched update: %+v", graphs)
+	}
+
+	deleteURL := "/api/dashboards/" + strconv.FormatInt(dashboardAID, 10) + "/graphs/" + strconv.FormatInt(graphID, 10)
+	req = httptest.NewRequest("DELETE", deleteURL, nil)
+	rr = httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("Expected dashboard mismatch delete to return 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	graphs, err = database.GetDashboardGraphs(dashboardBID)
+	if err != nil {
+		t.Fatalf("Failed to get dashboard B graphs after delete: %v", err)
+	}
+	if len(graphs) != 1 {
+		t.Fatalf("Expected graph to remain after mismatched delete, got %d graphs", len(graphs))
 	}
 }
 

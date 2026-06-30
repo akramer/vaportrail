@@ -276,7 +276,7 @@ func (m *MockStore) GetDashboardGraphs(dashboardID int64) ([]db.DashboardGraph, 
 	return nil, nil
 }
 
-func (m *MockStore) DeleteDashboardGraph(id int64) error {
+func (m *MockStore) DeleteDashboardGraph(id, dashboardID int64) error {
 	return nil
 }
 
