@@ -374,6 +374,58 @@ func TestHandleStatus(t *testing.T) {
 	if !contains(rr.Body.String(), "Raw Data Statistics") {
 		t.Errorf("Expected 'Raw Data Statistics' in response body, got:\n%s", rr.Body.String())
 	}
+	if !contains(rr.Body.String(), "/status/cleanup-orphaned-data") {
+		t.Errorf("Expected orphaned data cleanup form in response body")
+	}
+}
+
+func TestHandleStatusCleanupOrphanedData(t *testing.T) {
+	s, database := setupTestServer(t)
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := database.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("Disable foreign keys failed: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO raw_results (time, target_id, latency) VALUES (?, ?, ?)`, now, int64(999), 12.3); err != nil {
+		t.Fatalf("Insert orphaned raw row failed: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO aggregated_results (time, target_id, window_seconds, tdigest_data, timeout_count) VALUES (?, ?, ?, ?, ?)`, now, int64(999), 60, []byte{1, 2, 3, 4}, 0); err != nil {
+		t.Fatalf("Insert orphaned aggregated row failed: %v", err)
+	}
+	if _, err := database.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("Enable foreign keys failed: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/status/cleanup-orphaned-data", nil)
+	rr := httptest.NewRecorder()
+	s.router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %v body: %s", rr.Code, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), "Orphaned Data Cleanup Report") {
+		t.Fatalf("Expected cleanup report in response body, got:\n%s", rr.Body.String())
+	}
+	if !contains(rr.Body.String(), "Deleted 1 raw data rows") || !contains(rr.Body.String(), "1 aggregated data rows.") {
+		t.Fatalf("Expected deleted row counts in response body, got:\n%s", rr.Body.String())
+	}
+
+	var rawCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM raw_results WHERE target_id = ?`, int64(999)).Scan(&rawCount); err != nil {
+		t.Fatalf("Count orphaned raw rows failed: %v", err)
+	}
+	if rawCount != 0 {
+		t.Fatalf("Expected orphaned raw rows to be deleted, got %d", rawCount)
+	}
+	var aggregatedCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM aggregated_results WHERE target_id = ?`, int64(999)).Scan(&aggregatedCount); err != nil {
+		t.Fatalf("Count orphaned aggregated rows failed: %v", err)
+	}
+	if aggregatedCount != 0 {
+		t.Fatalf("Expected orphaned aggregated rows to be deleted, got %d", aggregatedCount)
+	}
 }
 
 func TestHandleDashboard(t *testing.T) {

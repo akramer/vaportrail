@@ -51,6 +51,7 @@ type Store interface {
 	GetFreelistCount() (int64, error)
 	GetTDigestStats() ([]TDigestStat, error)
 	GetRawStats() (*RawStats, error)
+	DeleteOrphanedData() (*OrphanedDataCleanupReport, error)
 
 	// Dashboard methods
 	AddDashboard(d *Dashboard) (int64, error)
@@ -81,6 +82,25 @@ type TDigestStat struct {
 type RawStats struct {
 	Count      int64
 	TotalBytes int64
+}
+
+type OrphanedRawDataGroup struct {
+	TargetID int64
+	Count    int64
+}
+
+type OrphanedAggregatedDataGroup struct {
+	TargetID      int64
+	WindowSeconds int
+	Count         int64
+	TotalBytes    int64
+}
+
+type OrphanedDataCleanupReport struct {
+	RawData               []OrphanedRawDataGroup
+	AggregatedData        []OrphanedAggregatedDataGroup
+	RawRowsDeleted        int64
+	AggregatedRowsDeleted int64
 }
 
 type DB struct {
@@ -610,6 +630,100 @@ func (d *DB) GetRawStats() (*RawStats, error) {
 		Count:      count,
 		TotalBytes: totalBytes,
 	}, nil
+}
+
+func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	report := &OrphanedDataCleanupReport{}
+
+	rawRows, err := tx.Query(`
+		SELECT r.target_id, COUNT(*)
+		FROM raw_results r
+		LEFT JOIN targets t ON t.id = r.target_id
+		WHERE t.id IS NULL
+		GROUP BY r.target_id
+		ORDER BY r.target_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for rawRows.Next() {
+		var group OrphanedRawDataGroup
+		if err := rawRows.Scan(&group.TargetID, &group.Count); err != nil {
+			rawRows.Close()
+			return nil, err
+		}
+		report.RawData = append(report.RawData, group)
+	}
+	if err := rawRows.Err(); err != nil {
+		rawRows.Close()
+		return nil, err
+	}
+	rawRows.Close()
+
+	aggregatedRows, err := tx.Query(`
+		SELECT a.target_id, a.window_seconds, COUNT(*), COALESCE(SUM(LENGTH(a.tdigest_data)), 0)
+		FROM aggregated_results a
+		LEFT JOIN targets t ON t.id = a.target_id
+		WHERE t.id IS NULL
+		GROUP BY a.target_id, a.window_seconds
+		ORDER BY a.target_id, a.window_seconds
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for aggregatedRows.Next() {
+		var group OrphanedAggregatedDataGroup
+		if err := aggregatedRows.Scan(&group.TargetID, &group.WindowSeconds, &group.Count, &group.TotalBytes); err != nil {
+			aggregatedRows.Close()
+			return nil, err
+		}
+		report.AggregatedData = append(report.AggregatedData, group)
+	}
+	if err := aggregatedRows.Err(); err != nil {
+		aggregatedRows.Close()
+		return nil, err
+	}
+	aggregatedRows.Close()
+
+	rawResult, err := tx.Exec(`
+		DELETE FROM raw_results
+		WHERE NOT EXISTS (
+			SELECT 1 FROM targets WHERE targets.id = raw_results.target_id
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	report.RawRowsDeleted, err = rawResult.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+
+	aggregatedResult, err := tx.Exec(`
+		DELETE FROM aggregated_results
+		WHERE NOT EXISTS (
+			SELECT 1 FROM targets WHERE targets.id = aggregated_results.target_id
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	report.AggregatedRowsDeleted, err = aggregatedResult.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return report, nil
 }
 
 // Dashboard methods

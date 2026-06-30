@@ -364,6 +364,103 @@ func TestDeleteTargetRemovesTimeSeriesAndGraphReferences(t *testing.T) {
 	}
 }
 
+func TestDeleteOrphanedDataReportsAndDeletesOnlyOrphans(t *testing.T) {
+	d, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create db: %v", err)
+	}
+	defer d.Close()
+	d.SetMaxOpenConns(1)
+
+	targetID, err := d.AddTarget(&Target{Name: "test", Address: "test", ProbeType: "http"})
+	if err != nil {
+		t.Fatalf("AddTarget failed: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := d.AddRawResults([]RawResult{{Time: now, TargetID: targetID, Latency: 10}}); err != nil {
+		t.Fatalf("AddRawResults valid row failed: %v", err)
+	}
+	if err := d.AddAggregatedResult(&AggregatedResult{
+		Time:          now,
+		TargetID:      targetID,
+		WindowSeconds: 60,
+		TDigestData:   []byte{1, 2, 3},
+	}); err != nil {
+		t.Fatalf("AddAggregatedResult valid row failed: %v", err)
+	}
+
+	if _, err := d.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("Disable foreign keys failed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO raw_results (time, target_id, latency) VALUES (?, ?, ?)`, now, int64(999), 20); err != nil {
+		t.Fatalf("Insert orphaned raw row failed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO raw_results (time, target_id, latency) VALUES (?, ?, ?)`, now.Add(time.Second), int64(999), 30); err != nil {
+		t.Fatalf("Insert second orphaned raw row failed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO aggregated_results (time, target_id, window_seconds, tdigest_data, timeout_count) VALUES (?, ?, ?, ?, ?)`, now, int64(999), 60, []byte{1, 2, 3, 4}, 0); err != nil {
+		t.Fatalf("Insert orphaned aggregated row failed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO aggregated_results (time, target_id, window_seconds, tdigest_data, timeout_count) VALUES (?, ?, ?, ?, ?)`, now, int64(1000), 300, []byte{1, 2}, 0); err != nil {
+		t.Fatalf("Insert second orphaned aggregated row failed: %v", err)
+	}
+	if _, err := d.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("Enable foreign keys failed: %v", err)
+	}
+
+	report, err := d.DeleteOrphanedData()
+	if err != nil {
+		t.Fatalf("DeleteOrphanedData failed: %v", err)
+	}
+
+	if report.RawRowsDeleted != 2 {
+		t.Fatalf("Expected 2 orphaned raw rows deleted, got %d", report.RawRowsDeleted)
+	}
+	if report.AggregatedRowsDeleted != 2 {
+		t.Fatalf("Expected 2 orphaned aggregated rows deleted, got %d", report.AggregatedRowsDeleted)
+	}
+	if len(report.RawData) != 1 || report.RawData[0].TargetID != 999 || report.RawData[0].Count != 2 {
+		t.Fatalf("Unexpected raw orphan report: %+v", report.RawData)
+	}
+	if len(report.AggregatedData) != 2 {
+		t.Fatalf("Expected 2 aggregated orphan groups, got %+v", report.AggregatedData)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"valid raw rows", `SELECT COUNT(*) FROM raw_results WHERE target_id = ?`, 1},
+		{"valid aggregated rows", `SELECT COUNT(*) FROM aggregated_results WHERE target_id = ?`, 1},
+	} {
+		var count int
+		if err := d.QueryRow(tc.query, targetID).Scan(&count); err != nil {
+			t.Fatalf("Count %s failed: %v", tc.name, err)
+		}
+		if count != tc.want {
+			t.Fatalf("Expected %s count %d, got %d", tc.name, tc.want, count)
+		}
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{"orphaned raw rows", `SELECT COUNT(*) FROM raw_results WHERE target_id NOT IN (SELECT id FROM targets)`},
+		{"orphaned aggregated rows", `SELECT COUNT(*) FROM aggregated_results WHERE target_id NOT IN (SELECT id FROM targets)`},
+	} {
+		var count int
+		if err := d.QueryRow(tc.query).Scan(&count); err != nil {
+			t.Fatalf("Count %s failed: %v", tc.name, err)
+		}
+		if count != 0 {
+			t.Fatalf("Expected %s to be deleted, got %d", tc.name, count)
+		}
+	}
+}
+
 func TestDeleteDashboardCascadesGraphsAndTargets(t *testing.T) {
 	d, err := New(":memory:")
 	if err != nil {

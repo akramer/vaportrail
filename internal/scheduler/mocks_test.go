@@ -243,6 +243,10 @@ func (m *MockStore) GetRawStats() (*db.RawStats, error) {
 	return &db.RawStats{Count: count, TotalBytes: count * 50}, nil
 }
 
+func (m *MockStore) DeleteOrphanedData() (*db.OrphanedDataCleanupReport, error) {
+	return &db.OrphanedDataCleanupReport{}, nil
+}
+
 // Dashboard methods (stubs - not used in scheduler tests)
 func (m *MockStore) AddDashboard(d *db.Dashboard) (int64, error) {
 	return 0, nil

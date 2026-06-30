@@ -6,6 +6,91 @@
     </div>
 </div>
 
+{{if .CleanupReport}}
+<div class="row mb-4">
+    <div class="col">
+        <div class="alert alert-info">
+            <h2 class="h5">Orphaned Data Cleanup Report</h2>
+            <p class="mb-2">
+                Deleted {{.CleanupReport.RawRowsDeleted}} raw data rows and
+                {{.CleanupReport.AggregatedRowsDeleted}} aggregated data rows.
+            </p>
+            {{if or .CleanupReport.RawData .CleanupReport.AggregatedData}}
+            <div class="row">
+                <div class="col-md-6">
+                    <h3 class="h6">Raw Data Found</h3>
+                    <table class="table table-sm mb-3">
+                        <thead>
+                            <tr>
+                                <th>Missing Target ID</th>
+                                <th>Rows</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .CleanupReport.RawData}}
+                            <tr>
+                                <td>{{.TargetID}}</td>
+                                <td>{{.Count}}</td>
+                            </tr>
+                            {{else}}
+                            <tr>
+                                <td colspan="2">No orphaned raw data found.</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h3 class="h6">Aggregated Data Found</h3>
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Missing Target ID</th>
+                                <th>Window (s)</th>
+                                <th>Rows</th>
+                                <th>Total Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .CleanupReport.AggregatedData}}
+                            <tr>
+                                <td>{{.TargetID}}</td>
+                                <td>{{.WindowSeconds}}</td>
+                                <td>{{.Count}}</td>
+                                <td>{{.TotalBytes | byteSize}}</td>
+                            </tr>
+                            {{else}}
+                            <tr>
+                                <td colspan="4">No orphaned aggregated data found.</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {{else}}
+            <p class="mb-0">No orphaned raw or aggregated data was found.</p>
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}
+
+<div class="row mb-4">
+    <div class="col">
+        <div class="card">
+            <div class="card-header">
+                Maintenance
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/status/cleanup-orphaned-data">
+                    <button type="submit" class="btn btn-warning">Clean Up Orphaned Data</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-md-6">
         <div class="card">

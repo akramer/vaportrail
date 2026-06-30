@@ -128,6 +128,7 @@ func (s *Server) routes() {
 	s.router.Get("/api/results/{id}", s.handleGetResults)
 	s.router.Get("/graph/{id}", s.handleGraph)
 	s.router.Get("/status", s.handleStatus)
+	s.router.Post("/status/cleanup-orphaned-data", s.handleStatusCleanupOrphanedData)
 	s.router.Get("/favicon.png", s.handleFavicon)
 	s.router.Get("/static/*", s.handleStatic)
 
@@ -581,6 +582,7 @@ type StatusPageData struct {
 	TDigestStats  []db.TDigestStat
 	RawStats      *db.RawStats
 	Timings       StatusPageTimings
+	CleanupReport *db.OrphanedDataCleanupReport
 }
 
 func (s StatusPageData) DBSizeString() string {
@@ -597,53 +599,77 @@ func (s StatusPageData) DBSizeString() string {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	data, err := s.statusPageData(nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleStatusCleanupOrphanedData(w http.ResponseWriter, r *http.Request) {
+	report, err := s.db.DeleteOrphanedData()
+	if err != nil {
+		http.Error(w, "Failed to clean up orphaned data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data, err := s.statusPageData(report)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) statusPageData(cleanupReport *db.OrphanedDataCleanupReport) (StatusPageData, error) {
 	start := time.Now()
 	dbSize, err := s.db.GetDBSizeBytes()
 	dbSizeDuration := time.Since(start)
 	if err != nil {
-		http.Error(w, "Failed to get DB size: "+err.Error(), http.StatusInternalServerError)
-		return
+		return StatusPageData{}, fmt.Errorf("failed to get DB size: %w", err)
 	}
 	start = time.Now()
 	pageCount, err := s.db.GetPageCount()
 	pageCountDuration := time.Since(start)
 	if err != nil {
-		http.Error(w, "Failed to get page count: "+err.Error(), http.StatusInternalServerError)
-		return
+		return StatusPageData{}, fmt.Errorf("failed to get page count: %w", err)
 	}
 	start = time.Now()
 	pageSize, err := s.db.GetPageSize()
 	pageSizeDuration := time.Since(start)
 	if err != nil {
-		http.Error(w, "Failed to get page size: "+err.Error(), http.StatusInternalServerError)
-		return
+		return StatusPageData{}, fmt.Errorf("failed to get page size: %w", err)
 	}
 	start = time.Now()
 	freelistCount, err := s.db.GetFreelistCount()
 	freelistCountDuration := time.Since(start)
 	if err != nil {
-		http.Error(w, "Failed to get freelist count: "+err.Error(), http.StatusInternalServerError)
-		return
+		return StatusPageData{}, fmt.Errorf("failed to get freelist count: %w", err)
 	}
 	start = time.Now()
 	tdStats, err := s.db.GetTDigestStats()
 	tdStatsDuration := time.Since(start)
 	if err != nil {
-		http.Error(w, "Failed to get tdigest stats: "+err.Error(), http.StatusInternalServerError)
-		return
+		return StatusPageData{}, fmt.Errorf("failed to get tdigest stats: %w", err)
 	}
 	start = time.Now()
 	rawStats, err := s.db.GetRawStats()
 	rawStatsDuration := time.Since(start)
 	if err != nil {
-		http.Error(w, "Failed to get raw stats: "+err.Error(), http.StatusInternalServerError)
-		return
+		return StatusPageData{}, fmt.Errorf("failed to get raw stats: %w", err)
 	}
 
 	log.Printf("Status Page Timings: DBSize=%v PageCount=%v PageSize=%v FreelistCount=%v TDigestStats=%v RawStats=%v",
 		dbSizeDuration, pageCountDuration, pageSizeDuration, freelistCountDuration, tdStatsDuration, rawStatsDuration)
 
-	data := StatusPageData{
+	return StatusPageData{
 		Name:          "System Status",
 		DBSize:        dbSize,
 		PageCount:     pageCount,
@@ -659,11 +685,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			TDigestStats:  tdStatsDuration,
 			RawStats:      rawStatsDuration,
 		},
-	}
-
-	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+		CleanupReport: cleanupReport,
+	}, nil
 }
 
 func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
