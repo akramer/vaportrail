@@ -20,6 +20,7 @@ func TestScheduler_RunProbeLoop_WithMocks(t *testing.T) {
 	s := New(mockDB)
 	s.Clock = fakeClock
 	s.Start()
+	defer s.Stop()
 
 	// Setup Mock Runner
 	mockRunner := &MockRunner{
@@ -83,6 +84,7 @@ func TestTargetRemovalRace_WithMocks(t *testing.T) {
 	s := New(mockDB)
 	s.Clock = fakeClock
 	s.Start()
+	defer s.Stop()
 
 	// Mock that takes a bit of time
 	s.probeRunner = &MockRunner{
@@ -127,6 +129,7 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	s := New(mockDB)
 	s.Clock = fakeClock
 	s.Start()
+	defer s.Stop()
 
 	// Setup Mock Runner to simulate timeout
 	// In probe.go we return: fmt.Errorf("probe timed out after %v", cfg.Timeout)
@@ -180,4 +183,33 @@ func TestScheduler_TimeoutLogic(t *testing.T) {
 	}
 
 	s.RemoveTarget(id)
+}
+
+func TestScheduler_StopFlushesBufferedRawResults(t *testing.T) {
+	mockDB := NewMockStore()
+	s := New(mockDB)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	now := time.Now().UTC()
+	s.rawResultChan <- db.RawResult{
+		Time:     now,
+		TargetID: 42,
+		Latency:  123.4,
+	}
+
+	s.Stop()
+
+	results, err := mockDB.GetRawResults(42, now.Add(-time.Second), now.Add(time.Second), 10)
+	if err != nil {
+		t.Fatalf("GetRawResults failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 flushed result, got %d", len(results))
+	}
+	if results[0].Latency != 123.4 {
+		t.Fatalf("expected latency 123.4, got %v", results[0].Latency)
+	}
 }

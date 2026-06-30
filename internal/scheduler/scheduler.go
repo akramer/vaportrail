@@ -17,8 +17,13 @@ type Scheduler struct {
 
 	mu            sync.Mutex
 	stopChans     map[int64]chan struct{}
+	stopped       bool
+	probeWG       sync.WaitGroup
 	Clock         clockwork.Clock
 	rawResultChan chan db.RawResult
+	batchStopChan chan struct{}
+	batchWG       sync.WaitGroup
+	stopOnce      sync.Once
 
 	rollupManager    *RollupManager
 	retentionManager *RetentionManager
@@ -31,6 +36,7 @@ func New(database db.Store) *Scheduler {
 		stopChans:        make(map[int64]chan struct{}),
 		Clock:            clockwork.NewRealClock(),
 		rawResultChan:    make(chan db.RawResult, 1000), // Buffer size 1000
+		batchStopChan:    make(chan struct{}),
 		rollupManager:    NewRollupManager(database),
 		retentionManager: NewRetentionManager(database),
 	}
@@ -47,6 +53,7 @@ func (s *Scheduler) Start() error {
 		s.AddTarget(t)
 	}
 
+	s.batchWG.Add(1)
 	go s.runBatchWriter()
 	s.rollupManager.Start()
 	s.retentionManager.Start()
@@ -54,7 +61,26 @@ func (s *Scheduler) Start() error {
 	return nil
 }
 
+func (s *Scheduler) Stop() {
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.stopped = true
+		for id, ch := range s.stopChans {
+			close(ch)
+			delete(s.stopChans, id)
+		}
+		s.mu.Unlock()
+
+		s.probeWG.Wait()
+		close(s.batchStopChan)
+		s.batchWG.Wait()
+		s.rollupManager.Stop()
+		s.retentionManager.Stop()
+	})
+}
+
 func (s *Scheduler) runBatchWriter() {
+	defer s.batchWG.Done()
 	ticker := s.Clock.NewTicker(2 * time.Second) // Flush every 2 seconds
 	defer ticker.Stop()
 
@@ -81,18 +107,33 @@ func (s *Scheduler) runBatchWriter() {
 			}
 		case <-ticker.Chan():
 			flush()
+		case <-s.batchStopChan:
+			for {
+				select {
+				case res := <-s.rawResultChan:
+					buffer = append(buffer, res)
+				default:
+					flush()
+					return
+				}
+			}
 		}
 	}
 }
 
 func (s *Scheduler) AddTarget(t db.Target) {
 	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
 	if _, exists := s.stopChans[t.ID]; exists {
 		s.mu.Unlock()
 		return // Already running
 	}
 	stopCh := make(chan struct{})
 	s.stopChans[t.ID] = stopCh
+	s.probeWG.Add(1)
 	s.mu.Unlock()
 
 	log.Printf("Scheduler: Adding new target %s", t.Name)
@@ -110,6 +151,8 @@ func (s *Scheduler) RemoveTarget(id int64) {
 }
 
 func (s *Scheduler) runProbeLoop(t db.Target, stopCh chan struct{}) {
+	defer s.probeWG.Done()
+
 	cfg, err := probe.GetConfig(t.ProbeType, t.Address)
 	if err != nil {
 		log.Printf("Failed to get config for target %s: %v", t.Name, err)

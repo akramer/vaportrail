@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"vaportrail/internal/config"
 	"vaportrail/internal/db"
 	"vaportrail/internal/scheduler"
@@ -49,5 +52,9 @@ func main() {
 		}
 	}()
 
-	select {} // Block forever
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Printf("Received %s, shutting down...", sig)
+	sched.Stop()
 }
