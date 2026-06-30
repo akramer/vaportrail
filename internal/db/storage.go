@@ -638,10 +638,10 @@ func (d *DB) GetRawStats() (*RawStats, error) {
 	}, nil
 }
 
-const orphanedDataCleanupBatchLimit = 1000
+const orphanedDataCleanupBatchLimit = 100000
 
 func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	defer cancel()
 
 	conn, err := d.Conn(ctx)
@@ -650,7 +650,7 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, `PRAGMA busy_timeout = 1000`); err != nil {
+	if _, err := conn.ExecContext(ctx, `PRAGMA busy_timeout = 50000`); err != nil {
 		return nil, err
 	}
 
