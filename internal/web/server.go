@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"vaportrail/internal/config"
 	"vaportrail/internal/db"
@@ -613,6 +614,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatusCleanupOrphanedData(w http.ResponseWriter, r *http.Request) {
 	report, err := s.db.DeleteOrphanedData()
 	if err != nil {
+		if isDatabaseBusyError(err) {
+			http.Error(w, "Database is busy; no orphaned data was deleted. Try cleanup again in a moment.", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "Failed to clean up orphaned data: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -626,6 +631,14 @@ func (s *Server) handleStatusCleanupOrphanedData(w http.ResponseWriter, r *http.
 	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func isDatabaseBusyError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
 }
 
 func (s *Server) statusPageData(cleanupReport *db.OrphanedDataCleanupReport) (StatusPageData, error) {

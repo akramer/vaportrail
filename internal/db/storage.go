@@ -1,11 +1,13 @@
 package db
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -99,8 +101,12 @@ type OrphanedAggregatedDataGroup struct {
 type OrphanedDataCleanupReport struct {
 	RawData               []OrphanedRawDataGroup
 	AggregatedData        []OrphanedAggregatedDataGroup
+	BatchLimit            int
+	RawRowsFound          int64
+	AggregatedRowsFound   int64
 	RawRowsDeleted        int64
 	AggregatedRowsDeleted int64
+	MoreRemaining         bool
 }
 
 type DB struct {
@@ -632,98 +638,152 @@ func (d *DB) GetRawStats() (*RawStats, error) {
 	}, nil
 }
 
+const orphanedDataCleanupBatchLimit = 1000
+
 func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
-	tx, err := d.Begin()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := d.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
 
-	report := &OrphanedDataCleanupReport{}
+	if _, err := conn.ExecContext(ctx, `PRAGMA busy_timeout = 1000`); err != nil {
+		return nil, err
+	}
 
-	rawRows, err := tx.Query(`
-		SELECT r.target_id, COUNT(*)
+	report := &OrphanedDataCleanupReport{BatchLimit: orphanedDataCleanupBatchLimit}
+
+	rawRows, err := conn.QueryContext(ctx, `
+		SELECT r.rowid, r.target_id
 		FROM raw_results r
 		LEFT JOIN targets t ON t.id = r.target_id
 		WHERE t.id IS NULL
-		GROUP BY r.target_id
-		ORDER BY r.target_id
-	`)
+		ORDER BY r.rowid
+		LIMIT ?
+	`, orphanedDataCleanupBatchLimit)
 	if err != nil {
 		return nil, err
 	}
+	rawRowIDs := make([]int64, 0, orphanedDataCleanupBatchLimit)
+	rawGroups := map[int64]int64{}
 	for rawRows.Next() {
-		var group OrphanedRawDataGroup
-		if err := rawRows.Scan(&group.TargetID, &group.Count); err != nil {
+		var rowID, targetID int64
+		if err := rawRows.Scan(&rowID, &targetID); err != nil {
 			rawRows.Close()
 			return nil, err
 		}
-		report.RawData = append(report.RawData, group)
+		rawRowIDs = append(rawRowIDs, rowID)
+		rawGroups[targetID]++
 	}
 	if err := rawRows.Err(); err != nil {
 		rawRows.Close()
 		return nil, err
 	}
 	rawRows.Close()
+	for targetID, count := range rawGroups {
+		report.RawData = append(report.RawData, OrphanedRawDataGroup{TargetID: targetID, Count: count})
+		report.RawRowsFound += count
+	}
+	sort.Slice(report.RawData, func(i, j int) bool {
+		return report.RawData[i].TargetID < report.RawData[j].TargetID
+	})
 
-	aggregatedRows, err := tx.Query(`
-		SELECT a.target_id, a.window_seconds, COUNT(*), COALESCE(SUM(LENGTH(a.tdigest_data)), 0)
+	aggregatedRows, err := conn.QueryContext(ctx, `
+		SELECT a.rowid, a.target_id, a.window_seconds, COALESCE(LENGTH(a.tdigest_data), 0)
 		FROM aggregated_results a
 		LEFT JOIN targets t ON t.id = a.target_id
 		WHERE t.id IS NULL
-		GROUP BY a.target_id, a.window_seconds
-		ORDER BY a.target_id, a.window_seconds
-	`)
+		ORDER BY a.rowid
+		LIMIT ?
+	`, orphanedDataCleanupBatchLimit)
 	if err != nil {
 		return nil, err
 	}
+	aggregatedRowIDs := make([]int64, 0, orphanedDataCleanupBatchLimit)
+	aggregatedGroups := map[string]*OrphanedAggregatedDataGroup{}
 	for aggregatedRows.Next() {
-		var group OrphanedAggregatedDataGroup
-		if err := aggregatedRows.Scan(&group.TargetID, &group.WindowSeconds, &group.Count, &group.TotalBytes); err != nil {
+		var rowID, targetID, totalBytes int64
+		var windowSeconds int
+		if err := aggregatedRows.Scan(&rowID, &targetID, &windowSeconds, &totalBytes); err != nil {
 			aggregatedRows.Close()
 			return nil, err
 		}
-		report.AggregatedData = append(report.AggregatedData, group)
+		aggregatedRowIDs = append(aggregatedRowIDs, rowID)
+		key := fmt.Sprintf("%d:%d", targetID, windowSeconds)
+		group := aggregatedGroups[key]
+		if group == nil {
+			group = &OrphanedAggregatedDataGroup{TargetID: targetID, WindowSeconds: windowSeconds}
+			aggregatedGroups[key] = group
+		}
+		group.Count++
+		group.TotalBytes += totalBytes
 	}
 	if err := aggregatedRows.Err(); err != nil {
 		aggregatedRows.Close()
 		return nil, err
 	}
 	aggregatedRows.Close()
+	for _, group := range aggregatedGroups {
+		report.AggregatedData = append(report.AggregatedData, *group)
+		report.AggregatedRowsFound += group.Count
+	}
+	sort.Slice(report.AggregatedData, func(i, j int) bool {
+		if report.AggregatedData[i].TargetID == report.AggregatedData[j].TargetID {
+			return report.AggregatedData[i].WindowSeconds < report.AggregatedData[j].WindowSeconds
+		}
+		return report.AggregatedData[i].TargetID < report.AggregatedData[j].TargetID
+	})
 
-	rawResult, err := tx.Exec(`
-		DELETE FROM raw_results
-		WHERE NOT EXISTS (
-			SELECT 1 FROM targets WHERE targets.id = raw_results.target_id
-		)
-	`)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	report.RawRowsDeleted, err = rawResult.RowsAffected()
-	if err != nil {
-		return nil, err
+	defer tx.Rollback()
+
+	if len(rawRowIDs) > 0 {
+		rawResult, err := tx.ExecContext(ctx, `DELETE FROM raw_results WHERE rowid IN (`+placeholders(len(rawRowIDs))+`)`, int64sToAnys(rawRowIDs)...)
+		if err != nil {
+			return nil, err
+		}
+		report.RawRowsDeleted, err = rawResult.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	aggregatedResult, err := tx.Exec(`
-		DELETE FROM aggregated_results
-		WHERE NOT EXISTS (
-			SELECT 1 FROM targets WHERE targets.id = aggregated_results.target_id
-		)
-	`)
-	if err != nil {
-		return nil, err
-	}
-	report.AggregatedRowsDeleted, err = aggregatedResult.RowsAffected()
-	if err != nil {
-		return nil, err
+	if len(aggregatedRowIDs) > 0 {
+		aggregatedResult, err := tx.ExecContext(ctx, `DELETE FROM aggregated_results WHERE rowid IN (`+placeholders(len(aggregatedRowIDs))+`)`, int64sToAnys(aggregatedRowIDs)...)
+		if err != nil {
+			return nil, err
+		}
+		report.AggregatedRowsDeleted, err = aggregatedResult.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
+	report.MoreRemaining = len(rawRowIDs) == orphanedDataCleanupBatchLimit || len(aggregatedRowIDs) == orphanedDataCleanupBatchLimit
+
 	return report, nil
+}
+
+func placeholders(count int) string {
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
+}
+
+func int64sToAnys(values []int64) []any {
+	args := make([]any, len(values))
+	for i, value := range values {
+		args[i] = value
+	}
+	return args
 }
 
 // Dashboard methods
