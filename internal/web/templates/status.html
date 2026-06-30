@@ -23,6 +23,11 @@
                 Run cleanup again to continue.
             </p>
             {{end}}
+            {{if .CleanupReport.StoppedEarly}}
+            <p class="mb-2">
+                Cleanup stopped early: {{.CleanupReport.StopReason}} Run cleanup again to continue.
+            </p>
+            {{end}}
             {{if or .CleanupReport.RawData .CleanupReport.AggregatedData}}
             <div class="row">
                 <div class="col-md-6">

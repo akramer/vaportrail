@@ -624,8 +624,20 @@ func (s *Server) handleStatusCleanupOrphanedData(w http.ResponseWriter, r *http.
 
 	data, err := s.statusPageData(report)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		if isDatabaseBusyError(err) {
+			if !report.StoppedEarly {
+				report.StoppedEarly = true
+				report.StopReason = "Cleanup completed, but the status statistics could not refresh because the database was busy."
+			}
+			data = StatusPageData{
+				Name:          "System Status",
+				RawStats:      &db.RawStats{},
+				CleanupReport: report,
+			}
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "status.html", data); err != nil {

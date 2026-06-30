@@ -107,6 +107,8 @@ type OrphanedDataCleanupReport struct {
 	RawRowsDeleted        int64
 	AggregatedRowsDeleted int64
 	MoreRemaining         bool
+	StoppedEarly          bool
+	StopReason            string
 }
 
 type DB struct {
@@ -639,6 +641,7 @@ func (d *DB) GetRawStats() (*RawStats, error) {
 }
 
 const orphanedDataCleanupBatchLimit = 100000
+const orphanedDataCleanupDeleteChunkSize = 1000
 
 func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
@@ -650,7 +653,7 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, `PRAGMA busy_timeout = 50000`); err != nil {
+	if _, err := conn.ExecContext(ctx, `PRAGMA busy_timeout = 1000`); err != nil {
 		return nil, err
 	}
 
@@ -665,6 +668,11 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 		LIMIT ?
 	`, orphanedDataCleanupBatchLimit)
 	if err != nil {
+		if isCleanupBusyError(err) {
+			report.StoppedEarly = true
+			report.StopReason = "The database stayed busy while looking for orphaned raw data."
+			return report, nil
+		}
 		return nil, err
 	}
 	rawRowIDs := make([]int64, 0, orphanedDataCleanupBatchLimit)
@@ -680,6 +688,11 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 	}
 	if err := rawRows.Err(); err != nil {
 		rawRows.Close()
+		if isCleanupBusyError(err) {
+			report.StoppedEarly = true
+			report.StopReason = "The database stayed busy while looking for orphaned raw data."
+			return report, nil
+		}
 		return nil, err
 	}
 	rawRows.Close()
@@ -700,6 +713,11 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 		LIMIT ?
 	`, orphanedDataCleanupBatchLimit)
 	if err != nil {
+		if isCleanupBusyError(err) {
+			report.StoppedEarly = true
+			report.StopReason = "The database stayed busy while looking for orphaned aggregated data."
+			return report, nil
+		}
 		return nil, err
 	}
 	aggregatedRowIDs := make([]int64, 0, orphanedDataCleanupBatchLimit)
@@ -723,6 +741,11 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 	}
 	if err := aggregatedRows.Err(); err != nil {
 		aggregatedRows.Close()
+		if isCleanupBusyError(err) {
+			report.StoppedEarly = true
+			report.StopReason = "The database stayed busy while looking for orphaned aggregated data."
+			return report, nil
+		}
 		return nil, err
 	}
 	aggregatedRows.Close()
@@ -737,41 +760,98 @@ func (d *DB) DeleteOrphanedData() (*OrphanedDataCleanupReport, error) {
 		return report.AggregatedData[i].TargetID < report.AggregatedData[j].TargetID
 	})
 
-	tx, err := conn.BeginTx(ctx, nil)
+	rawDeleted, stopped, err := deleteOrphanedRowIDsInChunks(ctx, conn, "raw_results", rawRowIDs)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
-
-	if len(rawRowIDs) > 0 {
-		rawResult, err := tx.ExecContext(ctx, `DELETE FROM raw_results WHERE rowid IN (`+placeholders(len(rawRowIDs))+`)`, int64sToAnys(rawRowIDs)...)
-		if err != nil {
-			return nil, err
-		}
-		report.RawRowsDeleted, err = rawResult.RowsAffected()
-		if err != nil {
-			return nil, err
-		}
+	report.RawRowsDeleted = rawDeleted
+	if stopped {
+		report.StoppedEarly = true
+		report.StopReason = "The database stayed busy while deleting orphaned raw data."
+		report.MoreRemaining = true
+		return report, nil
 	}
 
-	if len(aggregatedRowIDs) > 0 {
-		aggregatedResult, err := tx.ExecContext(ctx, `DELETE FROM aggregated_results WHERE rowid IN (`+placeholders(len(aggregatedRowIDs))+`)`, int64sToAnys(aggregatedRowIDs)...)
-		if err != nil {
-			return nil, err
-		}
-		report.AggregatedRowsDeleted, err = aggregatedResult.RowsAffected()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
+	aggregatedDeleted, stopped, err := deleteOrphanedRowIDsInChunks(ctx, conn, "aggregated_results", aggregatedRowIDs)
+	if err != nil {
 		return nil, err
+	}
+	report.AggregatedRowsDeleted = aggregatedDeleted
+	if stopped {
+		report.StoppedEarly = true
+		report.StopReason = "The database stayed busy while deleting orphaned aggregated data."
+		report.MoreRemaining = true
+		return report, nil
 	}
 
 	report.MoreRemaining = len(rawRowIDs) == orphanedDataCleanupBatchLimit || len(aggregatedRowIDs) == orphanedDataCleanupBatchLimit
 
 	return report, nil
+}
+
+func deleteOrphanedRowIDsInChunks(ctx context.Context, conn *sql.Conn, table string, rowIDs []int64) (int64, bool, error) {
+	var deleted int64
+	for start := 0; start < len(rowIDs); start += orphanedDataCleanupDeleteChunkSize {
+		end := start + orphanedDataCleanupDeleteChunkSize
+		if end > len(rowIDs) {
+			end = len(rowIDs)
+		}
+
+		chunkDeleted, stopped, err := deleteOrphanedRowIDChunk(ctx, conn, table, rowIDs[start:end])
+		deleted += chunkDeleted
+		if err != nil || stopped {
+			return deleted, stopped, err
+		}
+	}
+	return deleted, false, nil
+}
+
+func deleteOrphanedRowIDChunk(ctx context.Context, conn *sql.Conn, table string, rowIDs []int64) (int64, bool, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			if isCleanupBusyError(err) {
+				return 0, true, nil
+			}
+			return 0, false, err
+		}
+
+		deleted, err := deleteOrphanedRowIDChunkOnce(ctx, conn, table, rowIDs)
+		if err == nil {
+			return deleted, false, nil
+		}
+		if !isCleanupBusyError(err) {
+			return 0, false, err
+		}
+	}
+}
+
+func deleteOrphanedRowIDChunkOnce(ctx context.Context, conn *sql.Conn, table string, rowIDs []int64) (int64, error) {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE rowid IN (`+placeholders(len(rowIDs))+`)`, int64sToAnys(rowIDs)...)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+func isCleanupBusyError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
 }
 
 func placeholders(count int) string {
