@@ -258,6 +258,155 @@ func TestDataStatsTriggers_AggregatedResults(t *testing.T) {
 	}
 }
 
+func TestForeignKeysEnabled(t *testing.T) {
+	d, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create db: %v", err)
+	}
+	defer d.Close()
+
+	var enabled int
+	if err := d.QueryRow(`PRAGMA foreign_keys`).Scan(&enabled); err != nil {
+		t.Fatalf("PRAGMA foreign_keys failed: %v", err)
+	}
+	if enabled != 1 {
+		t.Fatalf("Expected foreign_keys to be enabled, got %d", enabled)
+	}
+
+	if err := d.AddRawResults([]RawResult{{
+		Time:     time.Now().UTC(),
+		TargetID: 999,
+		Latency:  100,
+	}}); err == nil {
+		t.Fatal("Expected invalid raw result target_id to fail FK validation")
+	}
+}
+
+func TestDeleteTargetRemovesTimeSeriesAndGraphReferences(t *testing.T) {
+	d, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create db: %v", err)
+	}
+	defer d.Close()
+
+	targetID, err := d.AddTarget(&Target{Name: "test", Address: "test", ProbeType: "http"})
+	if err != nil {
+		t.Fatalf("AddTarget failed: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := d.AddResult(&Result{Time: now, TargetID: targetID, TimeoutCount: 1, TDigestData: []byte{1}}); err != nil {
+		t.Fatalf("AddResult failed: %v", err)
+	}
+	if err := d.AddRawResults([]RawResult{{Time: now, TargetID: targetID, Latency: 12.3}}); err != nil {
+		t.Fatalf("AddRawResults failed: %v", err)
+	}
+	if err := d.AddAggregatedResult(&AggregatedResult{
+		Time:          now,
+		TargetID:      targetID,
+		WindowSeconds: 60,
+		TDigestData:   []byte{1, 2, 3},
+		TimeoutCount:  0,
+	}); err != nil {
+		t.Fatalf("AddAggregatedResult failed: %v", err)
+	}
+
+	dashboardID, err := d.AddDashboard(&Dashboard{Name: "dash"})
+	if err != nil {
+		t.Fatalf("AddDashboard failed: %v", err)
+	}
+	graphID, err := d.AddDashboardGraph(&DashboardGraph{DashboardID: dashboardID, Title: "graph"})
+	if err != nil {
+		t.Fatalf("AddDashboardGraph failed: %v", err)
+	}
+	if err := d.SetGraphTargets(graphID, []int64{targetID}); err != nil {
+		t.Fatalf("SetGraphTargets failed: %v", err)
+	}
+
+	if err := d.DeleteTarget(targetID); err != nil {
+		t.Fatalf("DeleteTarget failed: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{"results", `SELECT COUNT(*) FROM results WHERE target_id = ?`},
+		{"raw_results", `SELECT COUNT(*) FROM raw_results WHERE target_id = ?`},
+		{"aggregated_results", `SELECT COUNT(*) FROM aggregated_results WHERE target_id = ?`},
+		{"dashboard_graph_targets", `SELECT COUNT(*) FROM dashboard_graph_targets WHERE target_id = ?`},
+	} {
+		var count int
+		if err := d.QueryRow(tc.query, targetID).Scan(&count); err != nil {
+			t.Fatalf("Count %s failed: %v", tc.name, err)
+		}
+		if count != 0 {
+			t.Fatalf("Expected %s rows to be deleted, got %d", tc.name, count)
+		}
+	}
+
+	rawStats, err := d.GetRawStats()
+	if err != nil {
+		t.Fatalf("GetRawStats failed: %v", err)
+	}
+	if rawStats.Count != 0 || rawStats.TotalBytes != 0 {
+		t.Fatalf("Expected raw stats to be zero, got count=%d bytes=%d", rawStats.Count, rawStats.TotalBytes)
+	}
+
+	tdStats, err := d.GetTDigestStats()
+	if err != nil {
+		t.Fatalf("GetTDigestStats failed: %v", err)
+	}
+	if len(tdStats) != 0 {
+		t.Fatalf("Expected tdigest stats to be empty, got %d rows", len(tdStats))
+	}
+}
+
+func TestDeleteDashboardCascadesGraphsAndTargets(t *testing.T) {
+	d, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create db: %v", err)
+	}
+	defer d.Close()
+
+	targetID, err := d.AddTarget(&Target{Name: "test", Address: "test", ProbeType: "http"})
+	if err != nil {
+		t.Fatalf("AddTarget failed: %v", err)
+	}
+	dashboardID, err := d.AddDashboard(&Dashboard{Name: "dash"})
+	if err != nil {
+		t.Fatalf("AddDashboard failed: %v", err)
+	}
+	graphID, err := d.AddDashboardGraph(&DashboardGraph{DashboardID: dashboardID, Title: "graph"})
+	if err != nil {
+		t.Fatalf("AddDashboardGraph failed: %v", err)
+	}
+	if err := d.SetGraphTargets(graphID, []int64{targetID}); err != nil {
+		t.Fatalf("SetGraphTargets failed: %v", err)
+	}
+
+	if err := d.DeleteDashboard(dashboardID); err != nil {
+		t.Fatalf("DeleteDashboard failed: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		arg   int64
+	}{
+		{"dashboard_graphs", `SELECT COUNT(*) FROM dashboard_graphs WHERE dashboard_id = ?`, dashboardID},
+		{"dashboard_graph_targets", `SELECT COUNT(*) FROM dashboard_graph_targets WHERE graph_id = ?`, graphID},
+	} {
+		var count int
+		if err := d.QueryRow(tc.query, tc.arg).Scan(&count); err != nil {
+			t.Fatalf("Count %s failed: %v", tc.name, err)
+		}
+		if count != 0 {
+			t.Fatalf("Expected %s rows to be deleted, got %d", tc.name, count)
+		}
+	}
+}
+
 func TestGetStatsFromDataStats(t *testing.T) {
 	d, err := New(":memory:")
 	if err != nil {

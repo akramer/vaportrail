@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"embed"
@@ -87,7 +88,7 @@ type DB struct {
 }
 
 func New(path string) (*DB, error) {
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite3", sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +101,17 @@ func New(path string) (*DB, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func sqliteDSN(path string) string {
+	if strings.Contains(path, "_foreign_keys=") || strings.Contains(path, "_fk=") {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "_foreign_keys=on"
 }
 
 func (d *DB) init() error {
@@ -275,12 +287,25 @@ func (d *DB) GetResultsByTime(targetID int64, start, end time.Time) ([]Result, e
 }
 
 func (d *DB) DeleteTarget(id int64) error {
-	_, err := d.Exec(`DELETE FROM results WHERE target_id = ?`, id)
+	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM targets WHERE id = ?`, id)
-	return err
+
+	for _, query := range []string{
+		`DELETE FROM results WHERE target_id = ?`,
+		`DELETE FROM raw_results WHERE target_id = ?`,
+		`DELETE FROM aggregated_results WHERE target_id = ?`,
+		`DELETE FROM dashboard_graph_targets WHERE target_id = ?`,
+		`DELETE FROM targets WHERE id = ?`,
+	} {
+		if _, err := tx.Exec(query, id); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (d *DB) AddRawResults(results []RawResult) error {
@@ -693,7 +718,7 @@ func (d *DB) GetDashboardGraphs(dashboardID int64) ([]DashboardGraph, error) {
 }
 
 func (d *DB) DeleteDashboardGraph(id int64) error {
-	// Targets will be deleted via CASCADE
+	// Graph target links will be deleted via CASCADE
 	_, err := d.Exec(`DELETE FROM dashboard_graphs WHERE id = ?`, id)
 	return err
 }
