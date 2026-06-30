@@ -226,6 +226,19 @@ func TestHandleGetResults_Raw(t *testing.T) {
 	if len(cappedResults) != 1000 {
 		t.Errorf("Expected 1000 capped results, got %d", len(cappedResults))
 	}
+	if len(cappedResults) > 0 {
+		if cappedResults[0].Time.Unix() != now.Add(-1099*time.Minute).Unix() {
+			t.Errorf("Expected capped raw results to start at newest retained boundary %v, got %v", now.Add(-1099*time.Minute), cappedResults[0].Time)
+		}
+		if cappedResults[len(cappedResults)-1].Time.Unix() != now.Unix() {
+			t.Errorf("Expected capped raw results to include latest sample %v, got %v", now, cappedResults[len(cappedResults)-1].Time)
+		}
+		for i := 1; i < len(cappedResults); i++ {
+			if cappedResults[i].Time.Before(cappedResults[i-1].Time) {
+				t.Fatalf("Expected capped raw results in ascending time order, got %v before %v at index %d", cappedResults[i].Time, cappedResults[i-1].Time, i)
+			}
+		}
+	}
 }
 
 func TestHandleGraph(t *testing.T) {

@@ -363,8 +363,18 @@ func (d *DB) GetLastRollupTime(targetID int64, windowSeconds int) (time.Time, er
 }
 
 func (d *DB) GetRawResults(targetID int64, start, end time.Time, limit int) ([]RawResult, error) {
-	rows, err := d.Query(`SELECT time, target_id, latency FROM raw_results 
-		WHERE target_id = ? AND time >= ? AND time < ? ORDER BY time ASC LIMIT ?`, targetID, start, end, limit)
+	query := `SELECT time, target_id, latency FROM raw_results
+		WHERE target_id = ? AND time >= ? AND time < ? ORDER BY time ASC`
+	args := []any{targetID, start, end}
+	if limit > 0 {
+		query = `SELECT time, target_id, latency FROM (
+			SELECT time, target_id, latency FROM raw_results
+			WHERE target_id = ? AND time >= ? AND time < ? ORDER BY time DESC LIMIT ?
+		) ORDER BY time ASC`
+		args = append(args, limit)
+	}
+
+	rows, err := d.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
